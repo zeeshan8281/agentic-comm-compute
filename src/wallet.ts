@@ -11,7 +11,7 @@ import { env } from "./config.js";
 // satisfies x402's `Wallet` union works.
 
 const chainFor = (network: string) =>
-  network === "base" || network === "eip155:8453" ? base : baseSepolia;
+  network === "base-sepolia" || network === "eip155:84532" ? baseSepolia : base;
 
 export type AgentWallet = {
   address: `0x${string}`;

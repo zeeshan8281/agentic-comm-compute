@@ -19,8 +19,8 @@ export const env = {
   AGENT_PRIVATE_KEY: optional("AGENT_PRIVATE_KEY"),
   AGENT_WALLET_ADDRESS: optional("AGENT_WALLET_ADDRESS"),
 
-  X402_NETWORK: optional("X402_NETWORK", "base-sepolia"),
-  BASE_RPC_URL: optional("BASE_RPC_URL", "https://sepolia.base.org"),
+  X402_NETWORK: optional("X402_NETWORK", "base"),
+  BASE_RPC_URL: optional("BASE_RPC_URL", "https://mainnet.base.org"),
 
   CAP_PER_PAYMENT_USDC: Number(optional("CAP_PER_PAYMENT_USDC", "1")),
   CAP_PER_SESSION_USDC: Number(optional("CAP_PER_SESSION_USDC", "10")),

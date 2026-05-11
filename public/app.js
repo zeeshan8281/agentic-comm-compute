@@ -63,7 +63,7 @@ async function confirm(approved) {
 function renderReceipt(r) {
   const explorer =
     r.txHash && r.txHash !== "0x"
-      ? `https://sepolia.basescan.org/tx/${r.txHash}`
+      ? `https://basescan.org/tx/${r.txHash}`
       : null;
   $("#receipt").innerHTML = `
     <h3>Receipt</h3>
