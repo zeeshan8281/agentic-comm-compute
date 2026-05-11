@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agentic-commerce-compte</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <strong>agentic-commerce</strong>
+        <span class="muted">x402 purchase agent</span>
+      </div>
+      <div class="attest" id="attest">attestation loading…</div>
+    </header>
+
+    <main>
+      <section class="request">
+        <h2>Purchase request</h2>
+        <form id="purchase">
+          <label>
+            Item
+            <select id="item" name="item"></select>
+          </label>
+          <label>
+            Max USDC
+            <input id="maxUsdc" name="maxUsdc" type="number" step="0.01" value="1" />
+          </label>
+          <button type="submit" id="submit">Run</button>
+        </form>
+        <div class="hitl" id="hitl" hidden>
+          <p id="hitlPrompt"></p>
+          <button id="approve">Approve</button>
+          <button id="reject" class="ghost">Reject</button>
+        </div>
+        <div class="receipt" id="receipt" hidden></div>
+      </section>
+
+      <section class="timeline">
+        <h2>Timeline</h2>
+        <ol id="events"></ol>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

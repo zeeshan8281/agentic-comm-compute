@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+.env.mainnet
+.env.sepolia
+.deploy-config
+scripts/.merchant-privkey
+*.log
+.DS_Store
