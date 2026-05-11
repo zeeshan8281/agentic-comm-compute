@@ -1,7 +1,14 @@
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
-import { env, catalog, merchants, findMerchantByItem, findCatalogItem } from "./config.js";
+import {
+  env,
+  catalog,
+  merchants,
+  findMerchantByItem,
+  findCatalogItem,
+  findResource,
+} from "./config.js";
 import { fetchQuote, payAndRetrieve } from "./x402-client.js";
 import { assertWithinCaps, recordSpend, requiresHitl } from "./caps.js";
 import { requestApproval } from "./hitl.js";
@@ -17,17 +24,19 @@ export type RunInput = {
 };
 
 const systemPrompt = `You are a purchase agent running inside an EigenCompute TEE.
-You receive a single purchase request — an item id from the fixed catalog and a max USDC the user is willing to spend.
+You receive a single purchase request — an item id from a fixed catalog and a max USDC the user is willing to spend.
 You must:
-  1. Call discover_offers to find an allowlisted merchant for the item.
-  2. Call fetch_quote to get the current price.
-  3. If the quote is above the user's max, abort.
-  4. Call pay_x402 — this will block on human approval when above the HITL threshold.
-  5. The pay_x402 tool also retrieves the asset; you do not need a separate retrieve step.
-  6. Call verify_delivery on the result.
-  7. Stop. The orchestrator emits the receipt; you do not write it yourself.
+  1. Call discover_offers to find which merchant sells the item.
+  2. Call fetch_quote to get the live price from the merchant's 402 challenge.
+  3. If the quote exceeds the user's max, stop and report.
+  4. Call pay_x402 — this signs the USDC transfer and retrieves the asset in one step. Above the HITL threshold it blocks for human approval.
+  5. Call verify_delivery on the result.
+  6. Stop. The orchestrator emits the receipt.
 
-Do not invent item ids. Do not call any URL not returned by discover_offers.`;
+Hard rules:
+- Never invent item ids. Use only what discover_offers returns.
+- Never call a URL the discover_offers result didn't give you.
+- Do not retry past a single fetch_quote / pay_x402 pair without changing inputs.`;
 
 export const runAgent = async (input: RunInput): Promise<Receipt> => {
   const sessionId = input.sessionId ?? randomUUID();
@@ -39,18 +48,18 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
     data: { sessionId, ...input },
   });
 
-  // The tools close over sessionId so each emits into the same SSE stream.
-  // The agent's job is choosing *which* tools and *in what order* — the
-  // dangerous primitives (signing, broadcasting) stay outside the model.
+  // Tools close over sessionId so each emits into the same SSE stream.
+  // The agent chooses *which* tools and *in what order* — the dangerous
+  // primitives (signing, broadcasting) stay outside the model.
   let lastQuote: Quote | undefined;
   let lastPayment: { txHash: `0x${string}`; bytes: Buffer; contentType: string } | undefined;
 
   const tools = {
     discover_offers: tool({
       description:
-        "Return allowlisted merchants whose catalog includes the requested item. Always call this first.",
+        "Return the allowlisted merchant + resource that sells the requested item. Always call this first. Returns the resource URL, HTTP method, and the merchant's identifier.",
       inputSchema: z.object({
-        itemId: z.string().describe("Catalog id, e.g. 'merch-tshirt'"),
+        itemId: z.string().describe("Catalog id, e.g. 'stablemerch-shirt' or 'btc-fees-now'"),
       }),
       execute: async ({ itemId }) => {
         session.emitEvent({
@@ -58,19 +67,29 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
           message: `Discovering merchants for ${itemId}`,
         });
         const item = findCatalogItem(itemId);
-        if (!item) {
-          return { error: `Unknown item ${itemId}. Catalog: ${catalog.map((c) => c.id).join(", ")}` };
+        const resource = findResource(itemId);
+        const merchant = findMerchantByItem(itemId);
+        if (!item || !resource || !merchant) {
+          return {
+            error: `Unknown item ${itemId}. Catalog: ${catalog.map((c) => c.id).join(", ")}`,
+          };
         }
-        const matching = merchants
-          .filter((m) => m.catalogItems.includes(itemId))
-          .map((m) => ({ merchantId: m.id, name: m.name, resourceUrl: `${m.baseUrl}/${itemId}` }));
-        return { item, merchants: matching };
+        return {
+          item,
+          offer: {
+            merchantId: merchant.id,
+            merchantName: merchant.name,
+            resourceUrl: resource.url,
+            method: resource.method,
+            approxAmountUsdc: resource.approxAmountUsdc,
+          },
+        };
       },
     }),
 
     fetch_quote: tool({
       description:
-        "Hit the merchant resource URL and parse the 402 challenge. Returns price in USDC and payment terms.",
+        "Send the merchant the request and read the 402 challenge — does NOT pay. Returns the on-chain price in USDC and payment terms.",
       inputSchema: z.object({
         merchantId: z.string(),
         itemId: z.string(),
@@ -82,8 +101,19 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
           message: `Fetching quote from ${merchantId}`,
           data: { resourceUrl },
         });
+        const resource = findResource(itemId);
+        if (!resource || resource.url !== resourceUrl) {
+          return { error: `Unknown resource ${itemId} ${resourceUrl}` };
+        }
         try {
-          const quote = await fetchQuote(resourceUrl, merchantId, itemId);
+          const body = resource.buildBody?.();
+          const quote = await fetchQuote({
+            url: resource.url,
+            method: resource.method,
+            body,
+            merchantId,
+            itemId,
+          });
           lastQuote = quote;
           session.emitEvent({
             kind: "quote_received",
@@ -120,6 +150,10 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
         if (lastQuote.amountUsdc !== amountUsdc) {
           return { error: `Amount mismatch: quote=${lastQuote.amountUsdc} attempted=${amountUsdc}` };
         }
+        const resource = findResource(itemId);
+        if (!resource || resource.url !== resourceUrl) {
+          return { error: `Resource lookup failed for ${itemId}` };
+        }
         const amountNum = Number(amountUsdc);
         try {
           assertWithinCaps(sessionId, amountNum, input.maxUsdc);
@@ -149,7 +183,12 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
         });
 
         try {
-          const { response, txHash } = await payAndRetrieve(resourceUrl);
+          const body = resource.buildBody?.();
+          const { response, txHash } = await payAndRetrieve({
+            url: resource.url,
+            method: resource.method,
+            body,
+          });
           const contentType = response.headers.get("content-type") ?? "application/octet-stream";
           const bytes = Buffer.from(await response.arrayBuffer());
           lastPayment = { txHash, bytes, contentType };
@@ -174,7 +213,7 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
 
     verify_delivery: tool({
       description:
-        "Validate the retrieved asset against the original quote. Checks content-type matches the catalog expectation and byteLength > 0. Returns sha256 of the bytes.",
+        "Validate the retrieved asset against the catalog expectation. Checks content-type and byteLength > 0. Returns sha256 of the bytes.",
       inputSchema: z.object({
         itemId: z.string(),
       }),
