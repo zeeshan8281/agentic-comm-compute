@@ -6,7 +6,7 @@
     <title>agentic-commerce — buy anything, paid in USDC, in one chat</title>
     <meta
       name="description"
-      content="Agentic checkout across India, US, and UK. Mobile recharges, data packs, eSIMs, gift cards (Amazon, Walmart, Swiggy, Tesco, BookMyShow, DoorDash) — settled in USDC over x402. Runs inside an EigenCompute TEE."
+      content="Agentic checkout across India, US, UK, Egypt, South Africa, and Nigeria. Mobile recharges, data, eSIMs, gift cards (Amazon, Walmart, Tesco, Swiggy, Jumia, Vodacom, MTN, Vodafone Egypt) — settled in USDC over x402. Runs inside an EigenCompute TEE."
     />
     <link rel="stylesheet" href="/landing.css" />
   </head>
@@ -27,12 +27,12 @@
 
     <main>
       <section class="hero">
-        <h1>Buy anything in India, US, or UK,<br />paid in USDC, from one chat.</h1>
+        <h1>Buy anything across 6 countries,<br />paid in USDC, from one chat.</h1>
         <p class="lead">
-          Amazon, Walmart, DoorDash, Steam, Tesco, John Lewis, Swiggy, Zomato, Jio recharges —
-          1,400+ brands across <strong>🇮🇳 India · 🇺🇸 US · 🇬🇧 UK</strong>, settled in
-          <strong>USDC over x402</strong> on Base mainnet. No KYC. Your phone and email never
-          leave the sealed env.
+          Amazon, Walmart, DoorDash, Steam, Tesco, John Lewis, Swiggy, Jumia, Vodacom, MTN, Vodafone Egypt —
+          1,600+ brands across <strong>🇮🇳 IN · 🇺🇸 US · 🇬🇧 UK · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</strong>,
+          settled in <strong>USDC over x402</strong> on Base mainnet. No KYC. Your phone and
+          email never leave the sealed env.
         </p>
         <div class="cta-row">
           <a class="cta primary" href="https://t.me/ac_eigen_bot" target="_blank" rel="noreferrer">Open @ac_eigen_bot →</a>
@@ -47,12 +47,12 @@
 
       <section class="stats">
         <div class="stat">
-          <strong>1,400+</strong>
-          <span>brands across 3 countries</span>
+          <strong>1,600+</strong>
+          <span>brands across 6 countries</span>
         </div>
         <div class="stat">
-          <strong>854 · 421 · 142</strong>
-          <span>🇺🇸 US · 🇬🇧 UK · 🇮🇳 India</span>
+          <strong>854 · 421 · 142 · 90 · 49 · 39</strong>
+          <span>🇺🇸 US · 🇬🇧 UK · 🇮🇳 IN · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</span>
         </div>
         <div class="stat">
           <strong>0.78</strong>
@@ -168,6 +168,46 @@
 
 → cryptorefills_browse   eSIM global · works US / UK / IN
 → asset_received         QR code emailed · install via iOS / Android</pre>
+        </details>
+
+        <details>
+          <summary>🇳🇬 “MTN Nigeria ₦1000 airtime”</summary>
+<pre>POST /api/run
+{"item":"MTN Nigeria ₦1000 airtime","maxUsdc":1}
+
+→ cryptorefills_browse   NG · 39 brands · mobile_credits
+→ cryptorefills_lookup   MTN ₦1000 → 0.85 USDC
+→ pay_x402               signed
+→ asset_received         recharge applied · SMS confirmation</pre>
+        </details>
+
+        <details>
+          <summary>🇿🇦 “Vodacom 1GB data”</summary>
+<pre>POST /api/run
+{"item":"Vodacom 1GB","maxUsdc":2}
+
+→ cryptorefills_browse   ZA · 49 brands · mobile_data
+→ cryptorefills_lookup   Vodacom 1GB → 1.10 USDC
+→ asset_received         data bundle activated</pre>
+        </details>
+
+        <details>
+          <summary>🇪🇬 “Amazon.eg E£100 gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.eg E£100","maxUsdc":3}
+
+→ cryptorefills_browse   EG · 90 brands available
+→ cryptorefills_lookup   Amazon.eg E£100 → 2.20 USDC
+→ asset_received         claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇳🇬 “Jumia voucher, anything”</summary>
+<pre>POST /api/run
+{"item":"Jumia Nigeria ₦5000","maxUsdc":4}
+
+→ cryptorefills_lookup   Jumia ₦5000 → 3.40 USDC
+→ asset_received         redemption code emailed</pre>
         </details>
       </section>
 

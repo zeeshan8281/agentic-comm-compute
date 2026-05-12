@@ -58,9 +58,12 @@ PATH B — Cryptorefills (the request describes a gift card, mobile top-up, eSIM
   4. Stop.
 
 Country hints (when the user mentions a brand without a country):
-- India (in): Jio, Airtel, Vi, BSNL, Swiggy, Zomato, BookMyShow, Phonepe, Nykaa, MakeMyTrip, Amazon Pay India.
+- India (in): Jio, Airtel India, Vi, BSNL, Swiggy, Zomato, BookMyShow, Phonepe, Nykaa, MakeMyTrip, Amazon Pay India.
 - United States (us): Amazon.com, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo, Roblox, Netflix, Domino's, Starbucks.
 - United Kingdom (gb): Amazon.co.uk, Tesco, Asda, Sainsbury's, John Lewis, M&S, Costa, Pret, Just Eat, Asos, Currys.
+- Nigeria (ng): Jumia (NG), MTN Nigeria, Airtel Nigeria, Glo Mobile, 9mobile, T2 Mobile.
+- South Africa (za): Amazon.co.za, Vodacom, MTN (SA), Telkom, CellC, PlayStation Store ZA, Steam ZA, Xbox ZA.
+- Egypt (eg): Amazon.eg, Jumia Egypt, B-Tech, Shukran, IKEA Egypt, Vodafone Egypt, Orange Egypt, Etisalat.
 - Global (any country): eSIM.
 
 Hard rules:
@@ -278,7 +281,7 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
       description:
         "List Cryptorefills brands available in a country (gift cards, mobile top-ups, vouchers). Country defaults to the user's configured country (currently '" +
         (input.userConfig?.cryptorefillsCountry ?? env.CRYPTOREFILLS_COUNTRY) +
-        "'). Supported: 'in' (India, 142 brands), 'us' (United States, 854 brands), 'gb' (United Kingdom, 421 brands). Returns brand_name + category + min/max amounts. Use this when the request is for a brand voucher you don't have a product_id for yet.",
+        "'). Supported: 'in' (India, 142 brands), 'us' (United States, 854 brands), 'gb' (United Kingdom, 421 brands), 'eg' (Egypt, 90 brands), 'za' (South Africa, 49 brands), 'ng' (Nigeria, 39 brands). Returns brand_name + category + min/max amounts. Use this when the request is for a brand voucher you don't have a product_id for yet.",
       inputSchema: z.object({
         country: z.string().length(2).optional().describe("ISO-3166 alpha-2, e.g. 'in', 'us', 'gb'. Defaults to user's configured country."),
         category: z.string().optional().describe("Optional filter, e.g. 'food', 'e-commerce', 'mobile_credits', 'streaming', 'games'."),

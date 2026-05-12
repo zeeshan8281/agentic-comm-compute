@@ -58,16 +58,21 @@ I can buy gift cards, mobile recharges, data packs, eSIMs, and more — settled 
   · 🇮🇳 India — 142 brands (Jio, Airtel, Swiggy, BookMyShow, …)
   · 🇺🇸 United States — 854 brands (Amazon, Walmart, Steam, DoorDash, …)
   · 🇬🇧 United Kingdom — 421 brands (Amazon UK, Tesco, John Lewis, …)
+  · 🇪🇬 Egypt — 90 brands (Amazon.eg, Jumia, Vodafone, Orange, …)
+  · 🇿🇦 South Africa — 49 brands (Amazon.co.za, Vodacom, MTN, PlayStation, …)
+  · 🇳🇬 Nigeria — 39 brands (Jumia, MTN, Airtel, Glo, 9mobile, …)
 
 Just chat with me normally:
   · "$25 Amazon gift card"
   · "6 GB data pack to my Jio number"
   · "£20 Tesco voucher"
+  · "Airtel Nigeria ₦1000 airtime"
+  · "Vodacom 1GB"
 
 First, tell me:
   · which country you're in (default: India)
   · your email (where vouchers are delivered)
-  · (India only) your mobile number if you want recharges
+  · your mobile number if you want recharges
 
 PII stays sealed in the agent's env. The AI that does the buying never sees your phone or email.`;
 
@@ -75,13 +80,15 @@ const HELP = `Send a purchase intent in plain English:
   · "$25 Amazon gift card"
   · "£20 Tesco voucher"
   · "₹100 Jio recharge"
-  · "5 GB Airtel data"
+  · "MTN Nigeria ₦500 airtime"
+  · "Vodacom 1GB data"
+  · "Amazon.eg E£100"
 
 Commands:
-  /country <in|us|gb> — switch country
-  /profile             — show your saved info
-  /reset               — clear your profile
-  /help                — this message`;
+  /country <in|us|gb|ng|za|eg> — switch country
+  /profile                       — show your saved info
+  /reset                         — clear your profile
+  /help                          — this message`;
 
 // Schema for the LLM intent classifier. Regex fast-path covers phone +
 // email; LLM only fires on free-form text that isn't trivially one of those.
@@ -98,10 +105,10 @@ const IntentSchema = z.object({
       "Spending cap in USDC. For ₹X (India) use (X/84)*1.25. For $X (US) use X*1.10. For £X (UK) use X*1.35. If unknown, leave undefined.",
     ),
   country: z
-    .enum(["in", "us", "gb"])
+    .enum(["in", "us", "gb", "ng", "za", "eg"])
     .optional()
     .describe(
-      "Set when the user explicitly asks to switch country, or when the request unambiguously names a country-specific brand (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in).",
+      "Set when the user explicitly asks to switch country, or when the request unambiguously names a country-specific brand (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in, 'Glo'/'9mobile' → ng, 'Vodacom' → za, 'Vodafone Egypt'/'Amazon.eg' → eg).",
     ),
 });
 type Intent = z.infer<typeof IntentSchema>;
@@ -123,19 +130,24 @@ const classifyIntent = async (
     };
   }
 
-  const sys = `You classify Telegram messages for a multi-country USDC purchase bot. Supported countries: India (in), United States (us), United Kingdom (gb).
+  const sys = `You classify Telegram messages for a multi-country USDC purchase bot. Supported countries: India (in), United States (us), United Kingdom (gb), Nigeria (ng), South Africa (za), Egypt (eg).
 Pick exactly one intent:
-- "purchase": user wants to buy a gift card, recharge, data pack, eSIM, or voucher. Extract a brief item description and a USDC ceiling. If the brand strongly implies a country (Jio/Airtel/Swiggy → in; Walmart/DoorDash/Target → us; Tesco/Asda/John Lewis → gb) set the country field even if profile is different.
-- "set_country": user wants to switch their default country. Set country to "in", "us", or "gb".
+- "purchase": user wants to buy a gift card, recharge, data pack, eSIM, or voucher. Extract a brief item description and a USDC ceiling. If the brand strongly implies a country (Jio/Airtel India/Swiggy → in; Walmart/DoorDash/Target → us; Tesco/Asda/John Lewis → gb; Glo/9mobile/Airtel Nigeria/MTN Nigeria/Jumia Nigeria → ng; Vodacom/MTN SA/Telkom/Amazon.co.za → za; Vodafone Egypt/Etisalat/Orange Egypt/Amazon.eg → eg) set the country field even if profile is different.
+- "set_country": user wants to switch their default country. Set country to one of in/us/gb/ng/za/eg.
 - "show_profile": user wants to see their saved info.
 - "help": user is asking how the bot works.
 - "chat": small talk or anything else.
+
+USDC ceiling currency hints: ₹X (in) → (X/84)*1.25; $X (us) → X*1.10; £X (gb) → X*1.35; ₦X (ng) → (X/1600)*1.20; R X (za) → (X/18)*1.20; E£X (eg) → (X/48)*1.20.
 
 User profile status: country=${profile?.country ?? "in"}, phone=${profile?.phone ? "set" : "missing"}, email=${profile?.email ? "set" : "missing"}.
 Brand hints by country:
   in (India): Reliance Jio, Airtel, Vi, BSNL, Swiggy, Zomato, BookMyShow, Google Play India, Amazon Pay, Phonepe, Nykaa, MakeMyTrip.
   us (United States): Amazon.com, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo eShop, Roblox, Netflix, Domino's, Starbucks, eSIM.
-  gb (United Kingdom): Amazon.co.uk, Tesco, Asda, Sainsbury's, John Lewis, Marks & Spencer, Costa, Pret, Just Eat, Asos, Currys, eSIM.`;
+  gb (United Kingdom): Amazon.co.uk, Tesco, Asda, Sainsbury's, John Lewis, Marks & Spencer, Costa, Pret, Just Eat, Asos, Currys, eSIM.
+  ng (Nigeria): Jumia, MTN Nigeria, Airtel Nigeria, Glo Mobile, 9mobile, T2 Mobile, Free Fire, PUBG Mobile, eSIM.
+  za (South Africa): Amazon.co.za, Vodacom, MTN, Telkom, CellC, PlayStation Store, Steam, Xbox, Apex Legends.
+  eg (Egypt): Amazon.eg, Jumia, B-Tech, Shukran, IKEA Egypt, Vodafone Egypt, Orange Egypt, Etisalat, Baraka, PUBG Mobile.`;
 
   try {
     const { object } = await generateObject({
@@ -165,11 +177,14 @@ const chatReply = async (
 Style: short, casual, lowercase-friendly, 1–3 sentences, no markdown headers, no bullet lists unless the user explicitly asks. Match the user's energy. Be a real chat partner, not a help screen. If the user is making small talk, just chat back. Only nudge toward a purchase if it fits naturally.
 
 Supported countries (and what's available):
-  · India (in) — 142 brands. Jio/Airtel/Vi/BSNL recharges + data, Swiggy, Zomato, BookMyShow, Google Play, Phonepe, Nykaa, MakeMyTrip.
-  · United States (us) — 854 brands. Amazon, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo, Roblox, Netflix, Domino's, Starbucks, eSIM, etc.
-  · United Kingdom (gb) — 421 brands. Amazon UK, Tesco, Asda, John Lewis, M&S, Costa, Just Eat, Asos, Currys, eSIM.
+  · India (in) — 142 brands. Jio/Airtel/Vi/BSNL recharges + data, Swiggy, Zomato, BookMyShow, Google Play, Phonepe, Nykaa.
+  · United States (us) — 854 brands. Amazon, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo, Roblox, Netflix, Starbucks, eSIM.
+  · United Kingdom (gb) — 421 brands. Amazon UK, Tesco, Asda, John Lewis, M&S, Costa, Just Eat, Asos, Currys.
+  · Nigeria (ng) — 39 brands. MTN, Airtel Nigeria, Glo, 9mobile recharges + data, Jumia.
+  · South Africa (za) — 49 brands. Amazon.co.za, Vodacom, MTN, Telkom, CellC, PlayStation, Steam.
+  · Egypt (eg) — 90 brands. Amazon.eg, Jumia, B-Tech, IKEA Egypt, Vodafone Egypt, Orange Egypt, Etisalat.
 
-User's current country: ${cc} (${countryLabel(cc)}). They can switch by saying "switch to US" / "I'm in the UK" or /country us /country gb /country in. Examples a user can send: "$25 Amazon gift card", "£20 Tesco voucher", "6 GB Jio data pack". Minimum order ~0.55 USDC (€0.50 merchant floor).
+User's current country: ${cc} (${countryLabel(cc)}). They can switch by saying "switch to Nigeria" / "I'm in South Africa" or /country ng /country za /country eg /country in /country us /country gb. Examples: "$25 Amazon gift card", "£20 Tesco voucher", "Airtel Nigeria ₦1000", "Vodacom 1GB", "Amazon.eg E£100". Minimum order ~0.55 USDC (€0.50 merchant floor).
 
 Profile status: country=${cc}, phone=${profile?.phone ?? "not set"}, email=${profile?.email ?? "not set"}. Email is always required. Phone is only required in India (for mobile recharges). If the user seems ready to buy and something is missing, mention it. Otherwise don't push.
 
@@ -362,12 +377,15 @@ export const startTelegramBot = () => {
       if (missing.length) {
         await ctx.reply(`Saved (${stored}). Still need: ${missing.join(", ")}.`);
       } else {
-        const hint =
-          updated.country === "in"
-            ? `try "₹100 Jio recharge" or "Swiggy ₹250".`
-            : updated.country === "us"
-              ? `try "$25 Amazon gift card" or "DoorDash $10".`
-              : `try "£20 Tesco voucher" or "Amazon UK £25".`;
+        const hints: Record<string, string> = {
+          in: `try "₹100 Jio recharge" or "Swiggy ₹250".`,
+          us: `try "$25 Amazon gift card" or "DoorDash $10".`,
+          gb: `try "£20 Tesco voucher" or "Amazon UK £25".`,
+          ng: `try "MTN ₦1000 airtime" or "Glo 1GB data".`,
+          za: `try "Vodacom 1GB data" or "Amazon.co.za R250".`,
+          eg: `try "Amazon.eg E£100" or "Vodafone Egypt E£50 airtime".`,
+        };
+        const hint = hints[updated.country] ?? `try "$25 Amazon gift card".`;
         await ctx.reply(`Saved (${stored}). You're set — ${hint}`);
       }
       return;

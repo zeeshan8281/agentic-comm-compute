@@ -65,8 +65,9 @@ export const upsertUser = (
 
 // Country code → { dialCode, mobileLocalLen, leadingDigits, label }.
 // Used both for phone normalization and to label profile output. India still
-// validates with the strictest rule (first digit 6-9); US/UK accept any
-// well-formed E.164. Country is lowercased everywhere in the store.
+// validates with the strictest rule (first digit 6-9); other countries are
+// permissive enough to accept the common mobile prefixes without over-fitting.
+// Country is lowercased everywhere in the store.
 export const SUPPORTED_COUNTRIES: Record<
   string,
   { dial: string; localLen: number; leading?: RegExp; label: string }
@@ -74,6 +75,11 @@ export const SUPPORTED_COUNTRIES: Record<
   in: { dial: "91", localLen: 10, leading: /^[6-9]/, label: "India 🇮🇳" },
   us: { dial: "1", localLen: 10, label: "United States 🇺🇸" },
   gb: { dial: "44", localLen: 10, label: "United Kingdom 🇬🇧" },
+  // Africa — top-3 Cryptorefills catalogs. Egypt is biggest by raw count;
+  // Nigeria + South Africa are mobile-recharge-heavy (Airtel/MTN/Vodacom/Glo).
+  ng: { dial: "234", localLen: 10, leading: /^[7-9]/, label: "Nigeria 🇳🇬" },
+  za: { dial: "27", localLen: 9, leading: /^[6-8]/, label: "South Africa 🇿🇦" },
+  eg: { dial: "20", localLen: 10, leading: /^1/, label: "Egypt 🇪🇬" },
 };
 
 export const countryLabel = (cc: string): string =>
