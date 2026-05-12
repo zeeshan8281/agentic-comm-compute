@@ -6,7 +6,7 @@
 // model that orchestrates the purchase never sees it.
 
 import { Telegraf, Markup, type Context } from "telegraf";
-import { generateObject } from "ai";
+import { generateObject, generateText, type ModelMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import pino from "pino";
@@ -33,6 +33,17 @@ const nextSessionId = (chatId: number) => {
   const n = (purchaseSeq.get(chatId) ?? 0) + 1;
   purchaseSeq.set(chatId, n);
   return `tg-${chatId}-${n}`;
+};
+
+// In-memory rolling chat history per chatId. Capped so context doesn't grow
+// without bound — the bot is transactional, the user doesn't need long memory.
+const chatHistory = new Map<number, ModelMessage[]>();
+const HISTORY_MAX = 12;
+const pushHistory = (chatId: number, msg: ModelMessage) => {
+  const arr = chatHistory.get(chatId) ?? [];
+  arr.push(msg);
+  if (arr.length > HISTORY_MAX) arr.splice(0, arr.length - HISTORY_MAX);
+  chatHistory.set(chatId, arr);
 };
 
 const cbApprove = (sid: string) => `hitl:approve:${sid}`;
@@ -115,6 +126,40 @@ Country: India. Common brands: Reliance Jio Data, Airtel Credits, Vi Bundle, BSN
   } catch (err) {
     log.warn({ err }, "intent classifier failed");
     return { intent: "chat" };
+  }
+};
+
+// Free-form chat reply for anything that isn't a purchase / profile / help.
+// Short, on-brand, nudges toward what the bot actually does without sounding
+// like a help screen every time.
+const chatReply = async (
+  chatId: number,
+  text: string,
+  profile: UserProfile | undefined,
+): Promise<string> => {
+  const sys = `You are @ac_eigen_bot, a friendly Telegram bot that buys mobile recharges, data packs, and gift cards in India, settled in USDC on Base mainnet via the x402 protocol. You run inside an EigenCompute TEE — the user's phone + email are sealed in env and you (the model) never see them; only a separate purchase tool does.
+
+Style: short, casual, lowercase-friendly, 1–3 sentences, no markdown headers, no bullet lists unless the user explicitly asks. Match the user's energy. Be a real chat partner, not a help screen. If the user is making small talk, just chat back. Only nudge toward a purchase if it fits naturally.
+
+Capabilities you can mention if asked: Jio/Airtel/Vi/BSNL recharges & data, gift cards for Swiggy / Zomato / BookMyShow / Amazon.in / Google Play / Nykaa / Phonepe, and ~140 other India brands via Cryptorefills. Examples a user can send: "6 GB Jio data pack", "₹100 Airtel topup", "Swiggy ₹250 gift card". Minimum order ~0.55 USDC (€0.50 merchant floor).
+
+Profile status: phone=${profile?.phone ?? "not set"}, email=${profile?.email ?? "not set"}. If both are missing and the user seems ready to buy, mention you need them first. Otherwise don't push.
+
+Don't make up prices, voucher codes, or order outcomes. Don't claim to have done something — the purchase tool is separate and the user will see live events when one actually fires.`;
+
+  const history = chatHistory.get(chatId) ?? [];
+  try {
+    const { text: reply } = await generateText({
+      model: env.ANTHROPIC_API_KEY ? anthropic(env.AGENT_MODEL) : env.AGENT_MODEL,
+      system: sys,
+      messages: [...history, { role: "user", content: text }],
+    });
+    pushHistory(chatId, { role: "user", content: text });
+    pushHistory(chatId, { role: "assistant", content: reply });
+    return reply.trim() || "hmm, didn't catch that — try \"₹100 Jio recharge\".";
+  } catch (err) {
+    log.warn({ err }, "chat reply failed");
+    return "had a hiccup on my end. try \"₹100 Jio recharge\" or /help.";
   }
 };
 
@@ -209,6 +254,7 @@ export const startTelegramBot = () => {
 
   bot.start(async (ctx) => {
     upsertUser(ctx.chat.id, {});
+    chatHistory.delete(ctx.chat.id);
     await ctx.reply(WELCOME);
   });
   bot.command("help", (ctx) => ctx.reply(HELP));
@@ -221,6 +267,7 @@ export const startTelegramBot = () => {
   });
   bot.command("reset", async (ctx) => {
     upsertUser(ctx.chat.id, { phone: undefined, email: undefined });
+    chatHistory.delete(ctx.chat.id);
     await ctx.reply("Profile cleared. Send your phone + email to set them again.");
   });
 
@@ -285,10 +332,18 @@ export const startTelegramBot = () => {
           "I need your phone + email first. Send them in any order and I'll save.",
         );
       }
+      pushHistory(chatId, { role: "user", content: text });
+      pushHistory(chatId, {
+        role: "assistant",
+        content: `[kicking off purchase: ${intent.item}, cap ${intent.maxUsdc ?? 2} USDC]`,
+      });
       const maxUsdc = intent.maxUsdc ?? 2;
       return runPurchase(ctx, chatId, profile, intent.item, maxUsdc);
     }
-    return ctx.reply(`Not sure I follow. Try "₹100 Jio recharge" or /help.`);
+    // Everything else — chitchat, vague questions, "what can you do",
+    // "are you real", etc. — gets a real LLM reply with rolling history.
+    const reply = await chatReply(chatId, text, profile);
+    return ctx.reply(reply);
   });
 
   bot.launch().catch((err: unknown) => log.error({ err }, "telegram launch failed"));
