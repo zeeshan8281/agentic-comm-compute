@@ -8,3 +8,6 @@ dist
 scripts/.merchant-privkey
 *.log
 .DS_Store
+
+# Per-chat user profiles (PII) — phone + email per Telegram chat.
+data/

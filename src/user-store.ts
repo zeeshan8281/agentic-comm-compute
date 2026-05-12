@@ -63,17 +63,51 @@ export const upsertUser = (
   return merged;
 };
 
-export const profileComplete = (p?: UserProfile): p is UserProfile =>
-  Boolean(p?.phone && p?.email);
+// Country code → { dialCode, mobileLocalLen, leadingDigits, label }.
+// Used both for phone normalization and to label profile output. India still
+// validates with the strictest rule (first digit 6-9); US/UK accept any
+// well-formed E.164. Country is lowercased everywhere in the store.
+export const SUPPORTED_COUNTRIES: Record<
+  string,
+  { dial: string; localLen: number; leading?: RegExp; label: string }
+> = {
+  in: { dial: "91", localLen: 10, leading: /^[6-9]/, label: "India 🇮🇳" },
+  us: { dial: "1", localLen: 10, label: "United States 🇺🇸" },
+  gb: { dial: "44", localLen: 10, label: "United Kingdom 🇬🇧" },
+};
 
-// Normalize user-typed Indian mobile numbers to E.164 with leading +.
-// Accepts "6393221408", "+91 6393221408", "+91-6393221408", "916393221408".
-export const normalizeIndianPhone = (raw: string): string | undefined => {
+export const countryLabel = (cc: string): string =>
+  SUPPORTED_COUNTRIES[cc.toLowerCase()]?.label ?? cc.toUpperCase();
+
+export const isSupportedCountry = (cc: string): boolean =>
+  cc.toLowerCase() in SUPPORTED_COUNTRIES;
+
+// Per-country mobile validation. Returns the E.164 string (with leading +)
+// when valid, otherwise undefined. India keeps the 6-9 leading-digit rule.
+// For US/UK, leading digit isn't gated (US has no fixed range, UK mobiles
+// start with 7 but landlines can also dial out, so we keep it permissive).
+export const normalizePhone = (raw: string, country: string): string | undefined => {
+  const meta = SUPPORTED_COUNTRIES[country.toLowerCase()];
+  if (!meta) return undefined;
   const digits = raw.replace(/[^\d]/g, "");
-  if (digits.length === 10 && /^[6-9]/.test(digits)) return `+91${digits}`;
-  if (digits.length === 12 && digits.startsWith("91") && /^91[6-9]/.test(digits))
-    return `+${digits}`;
-  return undefined;
+  const local = digits.length === meta.localLen ? digits : null;
+  const withDial =
+    digits.length === meta.localLen + meta.dial.length && digits.startsWith(meta.dial)
+      ? digits.slice(meta.dial.length)
+      : null;
+  const candidate = local ?? withDial;
+  if (!candidate) return undefined;
+  if (meta.leading && !meta.leading.test(candidate)) return undefined;
+  return `+${meta.dial}${candidate}`;
+};
+
+// Phone is required for India (mobile recharges are the headline use case).
+// For US / UK the headline use case is gift cards delivered to email — phone
+// is optional and only requested when the user wants a mobile recharge.
+export const profileComplete = (p?: UserProfile): p is UserProfile => {
+  if (!p?.email) return false;
+  if (p.country === "in") return Boolean(p.phone);
+  return true;
 };
 
 export const validEmail = (raw: string): boolean =>

@@ -51,11 +51,17 @@ PATH A — Static catalog (the request matches a known item id like 'btc-fees-no
   3. If quote ≤ max, call pay_x402(...). Above the HITL threshold it blocks for human approval.
   4. verify_delivery(itemId). Stop.
 
-PATH B — Cryptorefills (the request describes a gift card, mobile top-up, or country-scoped voucher — e.g. 'Google Play 10 INR', '₹100 Swiggy', 'Airtel ₹50 recharge', 'Phonepe wallet ₹500'):
-  1. cryptorefills_browse({country}) — list available brands in the user's country to confirm the brand exists. Skip this if the request already names a specific brand and denomination AND you've already seen it this turn.
+PATH B — Cryptorefills (the request describes a gift card, mobile top-up, eSIM, or country-scoped voucher — e.g. '$25 Amazon gift card', '£20 Tesco voucher', '₹100 Swiggy', 'Airtel ₹50 recharge', 'DoorDash $10', 'eSIM 5GB'):
+  1. cryptorefills_browse({country}) — list available brands in the user's country to confirm the brand exists. Skip if the request already names a specific brand + denomination AND you've already seen it this turn. Pass an explicit country only if the request unambiguously names a brand from a country different from the user's default (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in). Otherwise omit and let the tool use the user's configured country.
   2. cryptorefills_lookup_brand({country, brand_name}) — get the product_id for the requested denomination and its USDC price.
   3. If price_usdc ≤ max, call cryptorefills_buy({product_id, brandName, denomination, expectedUsdc, productValue?}). Above the HITL threshold it blocks for human approval. The buy tool pays, polls the order, and returns the voucher code.
   4. Stop.
+
+Country hints (when the user mentions a brand without a country):
+- India (in): Jio, Airtel, Vi, BSNL, Swiggy, Zomato, BookMyShow, Phonepe, Nykaa, MakeMyTrip, Amazon Pay India.
+- United States (us): Amazon.com, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo, Roblox, Netflix, Domino's, Starbucks.
+- United Kingdom (gb): Amazon.co.uk, Tesco, Asda, Sainsbury's, John Lewis, M&S, Costa, Pret, Just Eat, Asos, Currys.
+- Global (any country): eSIM.
 
 Hard rules:
 - Never invent product_ids or item_ids — only use ones returned by a discovery tool.
@@ -270,15 +276,17 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
 
     cryptorefills_browse: tool({
       description:
-        "List Cryptorefills brands available in a country (gift cards, mobile top-ups, vouchers). Country code defaults to the user's configured country (env CRYPTOREFILLS_COUNTRY, currently '" +
-        env.CRYPTOREFILLS_COUNTRY +
-        "'). Returns brand_name + category + min/max amounts. Use this when the request is for a brand voucher you don't have a product_id for yet.",
+        "List Cryptorefills brands available in a country (gift cards, mobile top-ups, vouchers). Country defaults to the user's configured country (currently '" +
+        (input.userConfig?.cryptorefillsCountry ?? env.CRYPTOREFILLS_COUNTRY) +
+        "'). Supported: 'in' (India, 142 brands), 'us' (United States, 854 brands), 'gb' (United Kingdom, 421 brands). Returns brand_name + category + min/max amounts. Use this when the request is for a brand voucher you don't have a product_id for yet.",
       inputSchema: z.object({
-        country: z.string().length(2).optional().describe("ISO-3166 alpha-2, e.g. 'in', 'us'. Defaults to env."),
-        category: z.string().optional().describe("Optional filter, e.g. 'food', 'e-commerce', 'mobile_credits'."),
+        country: z.string().length(2).optional().describe("ISO-3166 alpha-2, e.g. 'in', 'us', 'gb'. Defaults to user's configured country."),
+        category: z.string().optional().describe("Optional filter, e.g. 'food', 'e-commerce', 'mobile_credits', 'streaming', 'games'."),
       }),
       execute: async ({ country, category }) => {
-        const cc = (country ?? env.CRYPTOREFILLS_COUNTRY).toLowerCase();
+        const cc = (
+          country ?? input.userConfig?.cryptorefillsCountry ?? env.CRYPTOREFILLS_COUNTRY
+        ).toLowerCase();
         session.emitEvent({
           kind: "discover_offers",
           message: `Browsing Cryptorefills brands for country=${cc}${category ? ` category=${category}` : ""}`,
@@ -314,7 +322,9 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
         brand_name: z.string().describe("Exact brand_name from cryptorefills_browse"),
       }),
       execute: async ({ country, brand_name }) => {
-        const cc = (country ?? env.CRYPTOREFILLS_COUNTRY).toLowerCase();
+        const cc = (
+          country ?? input.userConfig?.cryptorefillsCountry ?? env.CRYPTOREFILLS_COUNTRY
+        ).toLowerCase();
         session.emitEvent({
           kind: "fetch_quote",
           message: `Looking up Cryptorefills products: ${brand_name} (${cc})`,

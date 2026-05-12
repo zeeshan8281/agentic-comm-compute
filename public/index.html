@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agentic-commerce — buy anything in India, paid in USDC, in one chat</title>
+    <title>agentic-commerce — buy anything, paid in USDC, in one chat</title>
     <meta
       name="description"
-      content="Agentic checkout for India. Mobile recharges, data packs, eSIMs, gift cards (Swiggy, Zomato, BookMyShow, Amazon.in) — settled in USDC over x402. Runs inside an EigenCompute TEE."
+      content="Agentic checkout across India, US, and UK. Mobile recharges, data packs, eSIMs, gift cards (Amazon, Walmart, Swiggy, Tesco, BookMyShow, DoorDash) — settled in USDC over x402. Runs inside an EigenCompute TEE."
     />
     <link rel="stylesheet" href="/landing.css" />
   </head>
@@ -27,11 +27,12 @@
 
     <main>
       <section class="hero">
-        <h1>Buy anything in India,<br />paid in USDC, from one chat.</h1>
+        <h1>Buy anything in India, US, or UK,<br />paid in USDC, from one chat.</h1>
         <p class="lead">
-          Recharge any SIM, buy any data pack, send a Swiggy / Zomato / BookMyShow voucher —
-          all settled in <strong>USDC over x402</strong> on Base mainnet.
-          No KYC. No middlemen. Your phone number and email never leave the sealed env.
+          Amazon, Walmart, DoorDash, Steam, Tesco, John Lewis, Swiggy, Zomato, Jio recharges —
+          1,400+ brands across <strong>🇮🇳 India · 🇺🇸 US · 🇬🇧 UK</strong>, settled in
+          <strong>USDC over x402</strong> on Base mainnet. No KYC. Your phone and email never
+          leave the sealed env.
         </p>
         <div class="cta-row">
           <a class="cta primary" href="https://t.me/ac_eigen_bot" target="_blank" rel="noreferrer">Open @ac_eigen_bot →</a>
@@ -46,12 +47,12 @@
 
       <section class="stats">
         <div class="stat">
-          <strong>140+</strong>
-          <span>India brands</span>
+          <strong>1,400+</strong>
+          <span>brands across 3 countries</span>
         </div>
         <div class="stat">
-          <strong>4</strong>
-          <span>carriers · Jio, Airtel, Vi, BSNL</span>
+          <strong>854 · 421 · 142</strong>
+          <span>🇺🇸 US · 🇬🇧 UK · 🇮🇳 India</span>
         </div>
         <div class="stat">
           <strong>0.78</strong>
@@ -119,6 +120,54 @@
 {"item":"Google Play India ₹100","maxUsdc":1.5}
 
 → asset_received      redemption code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇺🇸 “$25 Amazon US gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.com $25 gift card","maxUsdc":26}
+
+→ cryptorefills_browse   US · 854 brands available
+→ cryptorefills_lookup   Amazon.com $25 → 25.69 USDC
+→ pay_x402               signed · base mainnet
+→ asset_received         claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇺🇸 “$10 DoorDash credit”</summary>
+<pre>POST /api/run
+{"item":"DoorDash $10","maxUsdc":11}
+
+→ fetch_quote         DoorDash $10 → 10.27 USDC
+→ asset_received      redemption code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇬🇧 “£20 Tesco voucher”</summary>
+<pre>POST /api/run
+{"item":"Tesco £20","maxUsdc":27}
+
+→ cryptorefills_browse   GB · 421 brands available
+→ cryptorefills_lookup   Tesco £20 → 25.84 USDC
+→ asset_received         voucher emailed · use online or in-store</pre>
+        </details>
+
+        <details>
+          <summary>🇬🇧 “£25 Amazon UK gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.co.uk £25","maxUsdc":34}
+
+→ fetch_quote         Amazon.co.uk £25 → 32.30 USDC
+→ asset_received      claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🌐 “eSIM, 5GB, 7 days”</summary>
+<pre>POST /api/run
+{"item":"eSIM 5GB 7d","maxUsdc":15}
+
+→ cryptorefills_browse   eSIM global · works US / UK / IN
+→ asset_received         QR code emailed · install via iOS / Android</pre>
         </details>
       </section>
 

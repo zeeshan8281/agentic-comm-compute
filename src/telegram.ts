@@ -15,8 +15,11 @@ import {
   getUser,
   upsertUser,
   profileComplete,
-  normalizeIndianPhone,
+  normalizePhone,
   validEmail,
+  isSupportedCountry,
+  countryLabel,
+  SUPPORTED_COUNTRIES,
   type UserProfile,
 } from "./user-store.js";
 import { runAgent } from "./agent.js";
@@ -51,41 +54,54 @@ const cbReject = (sid: string) => `hitl:reject:${sid}`;
 
 const WELCOME = `Hey, I'm the agentic-commerce bot.
 
-I can buy mobile recharges, data packs, and gift cards in India — paid in USDC on Base. Just chat with me normally:
+I can buy gift cards, mobile recharges, data packs, eSIMs, and more — settled in USDC on Base. Available in:
+  · 🇮🇳 India — 142 brands (Jio, Airtel, Swiggy, BookMyShow, …)
+  · 🇺🇸 United States — 854 brands (Amazon, Walmart, Steam, DoorDash, …)
+  · 🇬🇧 United Kingdom — 421 brands (Amazon UK, Tesco, John Lewis, …)
 
+Just chat with me normally:
+  · "$25 Amazon gift card"
   · "6 GB data pack to my Jio number"
-  · "₹100 Airtel topup"
-  · "Swiggy ₹250 gift card"
+  · "£20 Tesco voucher"
 
-First, send me:
-  · your phone number (Indian mobile, the one being topped up)
+First, tell me:
+  · which country you're in (default: India)
   · your email (where vouchers are delivered)
+  · (India only) your mobile number if you want recharges
 
-I never share this. PII stays sealed in the agent's env — the AI that does the buying never sees it.`;
+PII stays sealed in the agent's env. The AI that does the buying never sees your phone or email.`;
 
 const HELP = `Send a purchase intent in plain English:
+  · "$25 Amazon gift card"
+  · "£20 Tesco voucher"
   · "₹100 Jio recharge"
   · "5 GB Airtel data"
-  · "BookMyShow ₹250"
 
 Commands:
-  /profile — show your saved phone + email
-  /reset   — clear your profile
-  /help    — this message`;
+  /country <in|us|gb> — switch country
+  /profile             — show your saved info
+  /reset               — clear your profile
+  /help                — this message`;
 
 // Schema for the LLM intent classifier. Regex fast-path covers phone +
 // email; LLM only fires on free-form text that isn't trivially one of those.
 const IntentSchema = z.object({
-  intent: z.enum(["purchase", "show_profile", "help", "chat"]),
+  intent: z.enum(["purchase", "set_country", "show_profile", "help", "chat"]),
   item: z
     .string()
     .optional()
-    .describe("Free-form item description, e.g. 'Reliance Jio Data 6 GB' or 'Swiggy ₹250'"),
+    .describe("Free-form item description, e.g. 'Reliance Jio Data 6 GB', 'Amazon US $25 gift card', 'Tesco £20'"),
   maxUsdc: z
     .number()
     .optional()
     .describe(
-      "Spending cap in USDC. If user names ₹X, set this to (X/84)*1.25 to leave headroom for the merchant quote. If unknown, leave undefined.",
+      "Spending cap in USDC. For ₹X (India) use (X/84)*1.25. For $X (US) use X*1.10. For £X (UK) use X*1.35. If unknown, leave undefined.",
+    ),
+  country: z
+    .enum(["in", "us", "gb"])
+    .optional()
+    .describe(
+      "Set when the user explicitly asks to switch country, or when the request unambiguously names a country-specific brand (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in).",
     ),
 });
 type Intent = z.infer<typeof IntentSchema>;
@@ -94,8 +110,10 @@ const classifyIntent = async (
   text: string,
   profile: UserProfile | undefined,
 ): Promise<Intent & { phone?: string; email?: string }> => {
-  // Fast-path: phone or email in plain text → set_profile.
-  const phone = normalizeIndianPhone(text);
+  // Fast-path: phone or email in plain text → set_profile. Phone is parsed
+  // against the user's current country (defaults to India when unset).
+  const country = profile?.country ?? "in";
+  const phone = normalizePhone(text, country);
   const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
   if (phone || emailMatch) {
     return {
@@ -105,15 +123,19 @@ const classifyIntent = async (
     };
   }
 
-  const sys = `You classify Telegram messages for an India-only USDC purchase bot.
+  const sys = `You classify Telegram messages for a multi-country USDC purchase bot. Supported countries: India (in), United States (us), United Kingdom (gb).
 Pick exactly one intent:
-- "purchase": user wants to buy a recharge / data pack / gift card. Extract a brief item description and a USDC ceiling.
+- "purchase": user wants to buy a gift card, recharge, data pack, eSIM, or voucher. Extract a brief item description and a USDC ceiling. If the brand strongly implies a country (Jio/Airtel/Swiggy → in; Walmart/DoorDash/Target → us; Tesco/Asda/John Lewis → gb) set the country field even if profile is different.
+- "set_country": user wants to switch their default country. Set country to "in", "us", or "gb".
 - "show_profile": user wants to see their saved info.
 - "help": user is asking how the bot works.
 - "chat": small talk or anything else.
 
-User profile status: phone=${profile?.phone ? "set" : "missing"}, email=${profile?.email ? "set" : "missing"}.
-Country: India. Common brands: Reliance Jio Data, Airtel Credits, Vi Bundle, BSNL Data, Swiggy, Zomato, BookMyShow, Google Play, Amazon Pay, Phonepe, Nykaa.`;
+User profile status: country=${profile?.country ?? "in"}, phone=${profile?.phone ? "set" : "missing"}, email=${profile?.email ? "set" : "missing"}.
+Brand hints by country:
+  in (India): Reliance Jio, Airtel, Vi, BSNL, Swiggy, Zomato, BookMyShow, Google Play India, Amazon Pay, Phonepe, Nykaa, MakeMyTrip.
+  us (United States): Amazon.com, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo eShop, Roblox, Netflix, Domino's, Starbucks, eSIM.
+  gb (United Kingdom): Amazon.co.uk, Tesco, Asda, Sainsbury's, John Lewis, Marks & Spencer, Costa, Pret, Just Eat, Asos, Currys, eSIM.`;
 
   try {
     const { object } = await generateObject({
@@ -137,13 +159,19 @@ const chatReply = async (
   text: string,
   profile: UserProfile | undefined,
 ): Promise<string> => {
-  const sys = `You are @ac_eigen_bot, a friendly Telegram bot that buys mobile recharges, data packs, and gift cards in India, settled in USDC on Base mainnet via the x402 protocol. You run inside an EigenCompute TEE — the user's phone + email are sealed in env and you (the model) never see them; only a separate purchase tool does.
+  const cc = profile?.country ?? "in";
+  const sys = `You are @ac_eigen_bot, a friendly Telegram bot that buys gift cards, mobile recharges, data packs, eSIMs, and vouchers across three countries, settled in USDC on Base mainnet via the x402 protocol. You run inside an EigenCompute TEE — the user's phone + email are sealed in env and you (the model) never see them; only a separate purchase tool does.
 
 Style: short, casual, lowercase-friendly, 1–3 sentences, no markdown headers, no bullet lists unless the user explicitly asks. Match the user's energy. Be a real chat partner, not a help screen. If the user is making small talk, just chat back. Only nudge toward a purchase if it fits naturally.
 
-Capabilities you can mention if asked: Jio/Airtel/Vi/BSNL recharges & data, gift cards for Swiggy / Zomato / BookMyShow / Amazon.in / Google Play / Nykaa / Phonepe, and ~140 other India brands via Cryptorefills. Examples a user can send: "6 GB Jio data pack", "₹100 Airtel topup", "Swiggy ₹250 gift card". Minimum order ~0.55 USDC (€0.50 merchant floor).
+Supported countries (and what's available):
+  · India (in) — 142 brands. Jio/Airtel/Vi/BSNL recharges + data, Swiggy, Zomato, BookMyShow, Google Play, Phonepe, Nykaa, MakeMyTrip.
+  · United States (us) — 854 brands. Amazon, Walmart, Target, Best Buy, DoorDash, Uber, Steam, Nintendo, Roblox, Netflix, Domino's, Starbucks, eSIM, etc.
+  · United Kingdom (gb) — 421 brands. Amazon UK, Tesco, Asda, John Lewis, M&S, Costa, Just Eat, Asos, Currys, eSIM.
 
-Profile status: phone=${profile?.phone ?? "not set"}, email=${profile?.email ?? "not set"}. If both are missing and the user seems ready to buy, mention you need them first. Otherwise don't push.
+User's current country: ${cc} (${countryLabel(cc)}). They can switch by saying "switch to US" / "I'm in the UK" or /country us /country gb /country in. Examples a user can send: "$25 Amazon gift card", "£20 Tesco voucher", "6 GB Jio data pack". Minimum order ~0.55 USDC (€0.50 merchant floor).
+
+Profile status: country=${cc}, phone=${profile?.phone ?? "not set"}, email=${profile?.email ?? "not set"}. Email is always required. Phone is only required in India (for mobile recharges). If the user seems ready to buy and something is missing, mention it. Otherwise don't push.
 
 Don't make up prices, voucher codes, or order outcomes. Don't claim to have done something — the purchase tool is separate and the user will see live events when one actually fires.`;
 
@@ -224,7 +252,10 @@ const runPurchase = async (
       maxUsdc,
       userConfig: {
         cryptorefillsEmail: profile.email,
-        cryptorefillsBeneficiary: profile.phone,
+        // For mobile recharges (India) the beneficiary is the phone. For gift
+        // cards / eSIMs (US/UK & many India brands) the beneficiary is the
+        // email — Cryptorefills accepts either depending on product type.
+        cryptorefillsBeneficiary: profile.phone ?? profile.email,
         cryptorefillsCountry: profile.country,
       },
     });
@@ -262,13 +293,32 @@ export const startTelegramBot = () => {
     const p = getUser(ctx.chat.id);
     if (!p) return ctx.reply("No profile yet. Send /start to set up.");
     await ctx.reply(
-      `phone: ${p.phone ?? "missing"}\nemail: ${p.email ?? "missing"}\ncountry: ${p.country}`,
+      `country: ${countryLabel(p.country)}\nphone: ${p.phone ?? "—"}\nemail: ${p.email ?? "—"}`,
     );
   });
-  bot.command("reset", async (ctx) => {
-    upsertUser(ctx.chat.id, { phone: undefined, email: undefined });
+  bot.command("country", async (ctx) => {
+    const arg = ctx.message.text.split(/\s+/)[1]?.toLowerCase();
+    if (!arg) {
+      const list = Object.entries(SUPPORTED_COUNTRIES)
+        .map(([k, v]) => `  /country ${k} — ${v.label}`)
+        .join("\n");
+      return ctx.reply(`Pick a country:\n${list}`);
+    }
+    if (!isSupportedCountry(arg)) {
+      return ctx.reply(
+        `Unsupported. Available: ${Object.keys(SUPPORTED_COUNTRIES).join(", ")}.`,
+      );
+    }
+    const updated = upsertUser(ctx.chat.id, { country: arg });
     chatHistory.delete(ctx.chat.id);
-    await ctx.reply("Profile cleared. Send your phone + email to set them again.");
+    const phoneNote =
+      arg === "in" && !updated.phone ? " Send your Indian mobile to enable recharges." : "";
+    await ctx.reply(`Country set to ${countryLabel(arg)}.${phoneNote}`);
+  });
+  bot.command("reset", async (ctx) => {
+    upsertUser(ctx.chat.id, { phone: undefined, email: undefined, country: "in" });
+    chatHistory.delete(ctx.chat.id);
+    await ctx.reply("Profile cleared. Send your email (and phone if you're in India) to set up again.");
   });
 
   bot.action(/^hitl:(approve|reject):(.+)$/, async (ctx) => {
@@ -307,30 +357,55 @@ export const startTelegramBot = () => {
         .filter(Boolean)
         .join(" · ");
       const missing: string[] = [];
-      if (!updated.phone) missing.push("phone");
       if (!updated.email) missing.push("email");
+      if (updated.country === "in" && !updated.phone) missing.push("phone (for Indian recharges)");
       if (missing.length) {
         await ctx.reply(`Saved (${stored}). Still need: ${missing.join(", ")}.`);
       } else {
-        await ctx.reply(
-          `Saved (${stored}). You're set — try "₹100 Jio recharge" or "Swiggy ₹250".`,
-        );
+        const hint =
+          updated.country === "in"
+            ? `try "₹100 Jio recharge" or "Swiggy ₹250".`
+            : updated.country === "us"
+              ? `try "$25 Amazon gift card" or "DoorDash $10".`
+              : `try "£20 Tesco voucher" or "Amazon UK £25".`;
+        await ctx.reply(`Saved (${stored}). You're set — ${hint}`);
       }
       return;
     }
 
+    if (intent.intent === "set_country" && intent.country) {
+      const updated = upsertUser(chatId, { country: intent.country });
+      chatHistory.delete(chatId);
+      const phoneNote =
+        intent.country === "in" && !updated.phone
+          ? " Send your Indian mobile to enable recharges."
+          : "";
+      return ctx.reply(`Country set to ${countryLabel(intent.country)}.${phoneNote}`);
+    }
     if (intent.intent === "show_profile") {
       const p = getUser(chatId);
       return ctx.reply(
-        p ? `phone: ${p.phone ?? "—"}\nemail: ${p.email ?? "—"}` : "No profile yet.",
+        p
+          ? `country: ${countryLabel(p.country)}\nphone: ${p.phone ?? "—"}\nemail: ${p.email ?? "—"}`
+          : "No profile yet.",
       );
     }
     if (intent.intent === "help") return ctx.reply(HELP);
     if (intent.intent === "purchase" && intent.item) {
+      // If the request implies a different country than the user's current
+      // setting (e.g. Tesco while country=in), follow the request — store
+      // the new country so subsequent purchases are consistent.
+      if (intent.country && profile?.country !== intent.country) {
+        profile = upsertUser(chatId, { country: intent.country });
+        chatHistory.delete(chatId);
+      }
+      const effectiveCountry = profile?.country ?? "in";
       if (!profileComplete(profile)) {
-        return ctx.reply(
-          "I need your phone + email first. Send them in any order and I'll save.",
-        );
+        const need =
+          effectiveCountry === "in"
+            ? "I need your email + Indian mobile first. Send them in any order and I'll save."
+            : "I need your email first. Send it and I'll save.";
+        return ctx.reply(need);
       }
       pushHistory(chatId, { role: "user", content: text });
       pushHistory(chatId, {
