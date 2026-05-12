@@ -29,6 +29,15 @@ export type RunInput = {
   sessionId?: string;
   item: string;
   maxUsdc: number;
+  // Optional per-call overrides for Cryptorefills delivery. The Telegram bot
+  // passes the chat owner's phone + email here so a single agent instance can
+  // serve many users without leaking PII through the model. When unset, the
+  // tool falls back to the global env values (single-tenant local dev).
+  userConfig?: {
+    cryptorefillsEmail?: string;
+    cryptorefillsBeneficiary?: string;
+    cryptorefillsCountry?: string;
+  };
 };
 
 const systemPrompt = `You are a purchase agent running inside an EigenCompute TEE.
@@ -348,9 +357,12 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
           .describe("Required when the product is_range=true; numeric face value in the product's currency."),
       }),
       execute: async ({ productId, brandName, denomination, expectedUsdc, productValue }) => {
-        if (!env.CRYPTOREFILLS_EMAIL || !env.CRYPTOREFILLS_BENEFICIARY) {
+        const email = input.userConfig?.cryptorefillsEmail ?? env.CRYPTOREFILLS_EMAIL;
+        const beneficiary =
+          input.userConfig?.cryptorefillsBeneficiary ?? env.CRYPTOREFILLS_BENEFICIARY;
+        if (!email || !beneficiary) {
           const msg =
-            "Cryptorefills env missing. Set CRYPTOREFILLS_EMAIL and CRYPTOREFILLS_BENEFICIARY in .env.";
+            "Cryptorefills delivery info missing. Set CRYPTOREFILLS_EMAIL and CRYPTOREFILLS_BENEFICIARY (or pass userConfig).";
           session.emitEvent({ kind: "error", message: msg });
           return { error: msg };
         }
@@ -391,7 +403,7 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
 
         const item: { product_id: string; beneficiary_account: string; product_value?: number } = {
           product_id: productId,
-          beneficiary_account: env.CRYPTOREFILLS_BENEFICIARY,
+          beneficiary_account: beneficiary,
         };
         if (productValue !== undefined) item.product_value = productValue;
 
@@ -399,7 +411,7 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
           const { response, txHash } = await payAndRetrieve({
             url: crOrdersUrl,
             method: "POST",
-            body: { email: env.CRYPTOREFILLS_EMAIL, items: [item] },
+            body: { email, items: [item] },
           });
           const orderJson = (await response.json()) as CrOrderResponse;
           recordSpend(sessionId, amountNum);

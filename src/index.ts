@@ -9,6 +9,7 @@ import { resolveApproval, getPendingPrompt } from "./hitl.js";
 import { readAttestation } from "./attestation.js";
 import { listReceipts, getReceipt } from "./receipts.js";
 import { getWallet } from "./wallet.js";
+import { startTelegramBot } from "./telegram.js";
 
 const log = pino({ level: env.LOG_LEVEL });
 const app = express();
@@ -101,4 +102,5 @@ app.listen(env.PORT, () => {
     },
     "agent ready",
   );
+  startTelegramBot();
 });

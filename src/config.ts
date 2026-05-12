@@ -57,6 +57,11 @@ export const env = {
   CRYPTOREFILLS_COUNTRY: optional("CRYPTOREFILLS_COUNTRY", "in"),
   CRYPTOREFILLS_EMAIL: optional("CRYPTOREFILLS_EMAIL"),
   CRYPTOREFILLS_BENEFICIARY: optional("CRYPTOREFILLS_BENEFICIARY"),
+
+  // Telegram conversational bot. Token from @BotFather. When empty, the bot
+  // module is not loaded and only the HTTP API runs.
+  TELEGRAM_BOT_TOKEN: optional("TELEGRAM_BOT_TOKEN"),
+  TELEGRAM_BOT_USERNAME: optional("TELEGRAM_BOT_USERNAME"),
 };
 
 // A merchant offers one or more catalog resources. Each resource pins down
