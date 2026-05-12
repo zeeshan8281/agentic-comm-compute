@@ -37,6 +37,17 @@ export type Asset = {
   byteLength: number;
 };
 
+export type VoucherDelivery = {
+  brand: string;
+  denomination: string;
+  orderId: string;
+  code?: string;
+  pin?: string;
+  serial?: string;
+  expiry?: string;
+  instructions?: string;
+};
+
 export type Receipt = {
   id: string;
   request: { item: string; maxUsdc: string };
@@ -45,6 +56,7 @@ export type Receipt = {
   amountUsdc: string;
   txHash: `0x${string}`;
   asset: { contentType: string; sha256: string; byteLength: number };
+  voucher?: VoucherDelivery;
   attestation: AttestationSnapshot;
   startedAt: string;
   completedAt: string;

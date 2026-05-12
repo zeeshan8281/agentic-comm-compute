@@ -1,4 +1,5 @@
 import { generateText, tool, stepCountIs } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -10,12 +11,19 @@ import {
   findResource,
 } from "./config.js";
 import { fetchQuote, payAndRetrieve } from "./x402-client.js";
+import {
+  listBrands as crListBrands,
+  listProducts as crListProducts,
+  pollUntilSettled as crPollUntilSettled,
+  ordersUrl as crOrdersUrl,
+  type CrOrderResponse,
+} from "./cryptorefills.js";
 import { assertWithinCaps, recordSpend, requiresHitl } from "./caps.js";
 import { requestApproval } from "./hitl.js";
 import { readAttestation } from "./attestation.js";
 import { saveReceipt } from "./receipts.js";
 import { getSession } from "./events.js";
-import type { Quote, Receipt } from "./types.js";
+import type { Quote, Receipt, VoucherDelivery } from "./types.js";
 
 export type RunInput = {
   sessionId?: string;
@@ -24,19 +32,27 @@ export type RunInput = {
 };
 
 const systemPrompt = `You are a purchase agent running inside an EigenCompute TEE.
-You receive a single purchase request — an item id from a fixed catalog and a max USDC the user is willing to spend.
-You must:
-  1. Call discover_offers to find which merchant sells the item.
-  2. Call fetch_quote to get the live price from the merchant's 402 challenge.
-  3. If the quote exceeds the user's max, stop and report.
-  4. Call pay_x402 — this signs the USDC transfer and retrieves the asset in one step. Above the HITL threshold it blocks for human approval.
-  5. Call verify_delivery on the result.
-  6. Stop. The orchestrator emits the receipt.
+You receive a single purchase request and a max USDC the user is willing to spend.
+
+There are two purchase paths. Pick exactly one based on the request:
+
+PATH A — Static catalog (the request matches a known item id like 'btc-fees-now', 'stablemerch-shirt', 'x-user-lookup', 'reddit-subreddit'):
+  1. discover_offers(itemId) — locate the merchant + resource URL.
+  2. fetch_quote(...) — read the live 402 challenge.
+  3. If quote ≤ max, call pay_x402(...). Above the HITL threshold it blocks for human approval.
+  4. verify_delivery(itemId). Stop.
+
+PATH B — Cryptorefills (the request describes a gift card, mobile top-up, or country-scoped voucher — e.g. 'Google Play 10 INR', '₹100 Swiggy', 'Airtel ₹50 recharge', 'Phonepe wallet ₹500'):
+  1. cryptorefills_browse({country}) — list available brands in the user's country to confirm the brand exists. Skip this if the request already names a specific brand and denomination AND you've already seen it this turn.
+  2. cryptorefills_lookup_brand({country, brand_name}) — get the product_id for the requested denomination and its USDC price.
+  3. If price_usdc ≤ max, call cryptorefills_buy({product_id, brandName, denomination, expectedUsdc, productValue?}). Above the HITL threshold it blocks for human approval. The buy tool pays, polls the order, and returns the voucher code.
+  4. Stop.
 
 Hard rules:
-- Never invent item ids. Use only what discover_offers returns.
-- Never call a URL the discover_offers result didn't give you.
-- Do not retry past a single fetch_quote / pay_x402 pair without changing inputs.`;
+- Never invent product_ids or item_ids — only use ones returned by a discovery tool.
+- Never call a URL outside the allowlist (the discovery tools enforce this).
+- Do not retry the same purchase twice without changing inputs.
+- The buy tool reads the user's email and beneficiary account from a sealed env config — never put those in tool arguments and never ask the user for them.`;
 
 export const runAgent = async (input: RunInput): Promise<Receipt> => {
   const sessionId = input.sessionId ?? randomUUID();
@@ -53,6 +69,11 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
   // primitives (signing, broadcasting) stay outside the model.
   let lastQuote: Quote | undefined;
   let lastPayment: { txHash: `0x${string}`; bytes: Buffer; contentType: string } | undefined;
+  // Set by cryptorefills_buy so the orchestrator can attach voucher data
+  // (code/pin/instructions) to the final Receipt. lastPayment is also set on
+  // that path with the order JSON serialized as the asset bytes.
+  let lastVoucher: VoucherDelivery | undefined;
+  let lastCryptoOrder: { merchantId: "cryptorefills"; resourceUrl: string; amountUsdc: string } | undefined;
 
   const tools = {
     discover_offers: tool({
@@ -237,36 +258,257 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
         };
       },
     }),
+
+    cryptorefills_browse: tool({
+      description:
+        "List Cryptorefills brands available in a country (gift cards, mobile top-ups, vouchers). Country code defaults to the user's configured country (env CRYPTOREFILLS_COUNTRY, currently '" +
+        env.CRYPTOREFILLS_COUNTRY +
+        "'). Returns brand_name + category + min/max amounts. Use this when the request is for a brand voucher you don't have a product_id for yet.",
+      inputSchema: z.object({
+        country: z.string().length(2).optional().describe("ISO-3166 alpha-2, e.g. 'in', 'us'. Defaults to env."),
+        category: z.string().optional().describe("Optional filter, e.g. 'food', 'e-commerce', 'mobile_credits'."),
+      }),
+      execute: async ({ country, category }) => {
+        const cc = (country ?? env.CRYPTOREFILLS_COUNTRY).toLowerCase();
+        session.emitEvent({
+          kind: "discover_offers",
+          message: `Browsing Cryptorefills brands for country=${cc}${category ? ` category=${category}` : ""}`,
+        });
+        try {
+          const brands = await crListBrands(cc);
+          const filtered = category
+            ? brands.filter((b) => b.category.toLowerCase() === category.toLowerCase())
+            : brands;
+          return {
+            country: cc,
+            count: filtered.length,
+            brands: filtered.map((b) => ({
+              brand_name: b.brand_name,
+              category: b.category,
+              min: b.min,
+              max: b.max,
+            })),
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `cryptorefills_browse failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
+
+    cryptorefills_lookup_brand: tool({
+      description:
+        "Get available denominations + product_ids for a Cryptorefills brand. Returns the exact product_id you'll pass to cryptorefills_buy plus the USDC price. is_range=true products require productValue at buy time.",
+      inputSchema: z.object({
+        country: z.string().length(2).optional(),
+        brand_name: z.string().describe("Exact brand_name from cryptorefills_browse"),
+      }),
+      execute: async ({ country, brand_name }) => {
+        const cc = (country ?? env.CRYPTOREFILLS_COUNTRY).toLowerCase();
+        session.emitEvent({
+          kind: "fetch_quote",
+          message: `Looking up Cryptorefills products: ${brand_name} (${cc})`,
+        });
+        try {
+          const products = await crListProducts(cc, brand_name);
+          return {
+            country: cc,
+            brand: brand_name,
+            count: products.length,
+            products: products.map((p) => ({
+              product_id: p.product_id,
+              product_name: p.product_name,
+              denomination: p.denomination_label,
+              currency: p.currency,
+              is_range: p.is_range,
+              face_value_usd: p.face_value_usd,
+              price_usdc: p.price_usdc,
+            })),
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `cryptorefills_lookup_brand failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
+
+    cryptorefills_buy: tool({
+      description:
+        "Buy a Cryptorefills product: signs the USDC payment via x402, posts the order, and polls until the voucher is delivered. Above the HITL threshold it blocks for human approval. Reads the user's email + beneficiary account from sealed env config — do NOT pass them in arguments.",
+      inputSchema: z.object({
+        productId: z.string().uuid().describe("From cryptorefills_lookup_brand"),
+        brandName: z.string().describe("For the receipt — must match the brand the product was listed under"),
+        denomination: z.string().describe("For the receipt — e.g. '10 INR', '₹500'"),
+        expectedUsdc: z.string().describe("price_usdc from the lookup. The tool aborts if the merchant quote differs."),
+        productValue: z
+          .number()
+          .optional()
+          .describe("Required when the product is_range=true; numeric face value in the product's currency."),
+      }),
+      execute: async ({ productId, brandName, denomination, expectedUsdc, productValue }) => {
+        if (!env.CRYPTOREFILLS_EMAIL || !env.CRYPTOREFILLS_BENEFICIARY) {
+          const msg =
+            "Cryptorefills env missing. Set CRYPTOREFILLS_EMAIL and CRYPTOREFILLS_BENEFICIARY in .env.";
+          session.emitEvent({ kind: "error", message: msg });
+          return { error: msg };
+        }
+        const amountNum = Number(expectedUsdc);
+        if (!Number.isFinite(amountNum) || amountNum <= 0) {
+          return { error: `Invalid expectedUsdc: ${expectedUsdc}` };
+        }
+        try {
+          assertWithinCaps(sessionId, amountNum, input.maxUsdc);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: msg });
+          return { error: msg };
+        }
+
+        if (requiresHitl(amountNum)) {
+          session.emitEvent({
+            kind: "hitl_requested",
+            message: `Awaiting human approval for ${expectedUsdc} USDC (${brandName} ${denomination})`,
+            data: { amountUsdc: expectedUsdc, merchantId: "cryptorefills", itemId: productId },
+          });
+          const approved = await requestApproval(sessionId, {
+            amountUsdc: expectedUsdc,
+            merchantId: `cryptorefills (${brandName} ${denomination})`,
+            itemId: productId,
+          });
+          session.emitEvent({
+            kind: "hitl_resolved",
+            message: approved ? "Approved" : "Rejected by user",
+          });
+          if (!approved) return { error: "Rejected by user" };
+        }
+
+        session.emitEvent({
+          kind: "pay_x402",
+          message: `Paying ${expectedUsdc} USDC for ${brandName} ${denomination}`,
+        });
+
+        const item: { product_id: string; beneficiary_account: string; product_value?: number } = {
+          product_id: productId,
+          beneficiary_account: env.CRYPTOREFILLS_BENEFICIARY,
+        };
+        if (productValue !== undefined) item.product_value = productValue;
+
+        try {
+          const { response, txHash } = await payAndRetrieve({
+            url: crOrdersUrl,
+            method: "POST",
+            body: { email: env.CRYPTOREFILLS_EMAIL, items: [item] },
+          });
+          const orderJson = (await response.json()) as CrOrderResponse;
+          recordSpend(sessionId, amountNum);
+          session.emitEvent({
+            kind: "payment_settled",
+            message: `Settled ${expectedUsdc} USDC. Order ${orderJson.order_id} status=${orderJson.status}. tx ${txHash}`,
+            data: { txHash, amountUsdc: expectedUsdc, orderId: orderJson.order_id },
+          });
+
+          const final = await crPollUntilSettled(orderJson.order_id, {
+            onTick: (r) =>
+              session.emitEvent({
+                kind: "retrieve_asset",
+                message: `Order ${r.order_id} status=${r.status}`,
+              }),
+          });
+
+          const delivery = final.deliveries?.[0];
+          const voucher: VoucherDelivery = {
+            brand: brandName,
+            denomination,
+            orderId: final.order_id,
+            code: delivery?.voucher_code,
+            pin: delivery?.voucher_pin,
+            serial: delivery?.serial_number,
+            expiry: delivery?.expiry_date,
+            instructions: delivery?.redemption_instructions,
+          };
+          const bytes = Buffer.from(JSON.stringify(final), "utf8");
+          lastPayment = { txHash, bytes, contentType: "application/json" };
+          lastVoucher = voucher;
+          lastCryptoOrder = {
+            merchantId: "cryptorefills",
+            resourceUrl: crOrdersUrl,
+            amountUsdc: expectedUsdc,
+          };
+          session.emitEvent({
+            kind: "asset_received",
+            message:
+              final.status === "completed"
+                ? `Voucher delivered${voucher.code ? ` (code ${voucher.code.slice(0, 4)}…)` : ""}`
+                : `Order ended in status=${final.status}`,
+            data: { status: final.status, orderId: final.order_id },
+          });
+
+          if (final.status !== "completed") {
+            return {
+              error: `Order ${final.order_id} ended in status=${final.status}`,
+              orderId: final.order_id,
+              status: final.status,
+            };
+          }
+          return {
+            txHash,
+            orderId: final.order_id,
+            status: final.status,
+            voucher: {
+              brand: voucher.brand,
+              denomination: voucher.denomination,
+              code: voucher.code,
+              pin: voucher.pin,
+              instructions: voucher.instructions,
+            },
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `cryptorefills_buy failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
   };
 
   const userPrompt = `Purchase request: { "item": "${input.item}", "maxUsdc": ${input.maxUsdc} }`;
 
+  // Direct Anthropic when ANTHROPIC_API_KEY is set; fall through to the AI
+  // SDK gateway-style provider string when only AI_GATEWAY_API_KEY is set.
+  const model = env.ANTHROPIC_API_KEY ? anthropic(env.AGENT_MODEL) : env.AGENT_MODEL;
   await generateText({
-    model: env.AGENT_MODEL,
+    model,
     system: systemPrompt,
     prompt: userPrompt,
     tools,
-    stopWhen: stepCountIs(8),
+    // Cryptorefills can take a few extra steps (browse + lookup + buy).
+    stopWhen: stepCountIs(12),
   });
 
-  if (!lastPayment || !lastQuote) {
+  if (!lastPayment || (!lastQuote && !lastCryptoOrder)) {
     throw new Error("Agent finished without completing payment.");
   }
 
   const merchant = findMerchantByItem(input.item);
   const sha256 = createHash("sha256").update(lastPayment.bytes).digest("hex");
+  const receiptMerchantId = lastCryptoOrder?.merchantId ?? merchant?.id ?? lastQuote!.merchantId;
+  const receiptResourceUrl = lastCryptoOrder?.resourceUrl ?? lastQuote!.resourceUrl;
+  const receiptAmountUsdc = lastCryptoOrder?.amountUsdc ?? lastQuote!.amountUsdc;
   const receipt: Receipt = {
     id: randomUUID(),
     request: { item: input.item, maxUsdc: String(input.maxUsdc) },
-    merchantId: merchant?.id ?? lastQuote.merchantId,
-    resourceUrl: lastQuote.resourceUrl,
-    amountUsdc: lastQuote.amountUsdc,
+    merchantId: receiptMerchantId,
+    resourceUrl: receiptResourceUrl,
+    amountUsdc: receiptAmountUsdc,
     txHash: lastPayment.txHash,
     asset: {
       contentType: lastPayment.contentType,
       sha256,
       byteLength: lastPayment.bytes.byteLength,
     },
+    voucher: lastVoucher,
     attestation: readAttestation(),
     startedAt,
     completedAt: new Date().toISOString(),
