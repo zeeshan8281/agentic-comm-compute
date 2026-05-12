@@ -3,46 +3,230 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agentic-commerce-compte</title>
-    <link rel="stylesheet" href="/style.css" />
+    <title>agentic-commerce — buy anything in India, paid in USDC, in one chat</title>
+    <meta
+      name="description"
+      content="Agentic checkout for India. Mobile recharges, data packs, eSIMs, gift cards (Swiggy, Zomato, BookMyShow, Amazon.in) — settled in USDC over x402. Runs inside an EigenCompute TEE."
+    />
+    <link rel="stylesheet" href="/landing.css" />
   </head>
   <body>
-    <header>
+    <header class="site">
       <div class="brand">
         <strong>agentic-commerce</strong>
-        <span class="muted">x402 purchase agent</span>
+        <span class="muted">/ x402 purchase agent</span>
       </div>
-      <div class="attest" id="attest">attestation loading…</div>
+      <nav>
+        <a href="#examples">examples</a>
+        <a href="#setup">setup</a>
+        <a href="#endpoints">endpoints</a>
+        <a href="/demo.html">demo</a>
+        <a href="/verify" class="attest" id="attest">attestation</a>
+      </nav>
     </header>
 
     <main>
-      <section class="request">
-        <h2>Purchase request</h2>
-        <form id="purchase">
-          <label>
-            Item
-            <select id="item" name="item"></select>
-          </label>
-          <label>
-            Max USDC
-            <input id="maxUsdc" name="maxUsdc" type="number" step="0.01" value="1" />
-          </label>
-          <button type="submit" id="submit">Run</button>
-        </form>
-        <div class="hitl" id="hitl" hidden>
-          <p id="hitlPrompt"></p>
-          <button id="approve">Approve</button>
-          <button id="reject" class="ghost">Reject</button>
+      <section class="hero">
+        <h1>Buy anything in India,<br />paid in USDC, from one chat.</h1>
+        <p class="lead">
+          Recharge any SIM, buy any data pack, send a Swiggy / Zomato / BookMyShow voucher —
+          all settled in <strong>USDC over x402</strong> on Base mainnet.
+          No KYC. No middlemen. Your phone number and email never leave the sealed env.
+        </p>
+        <div class="cta-row">
+          <a class="cta primary" href="#telegram">Open in Telegram →</a>
+          <a class="cta ghost" href="/demo.html">Try the web demo</a>
         </div>
-        <div class="receipt" id="receipt" hidden></div>
+        <p class="footnote">
+          Runs inside an
+          <a href="https://eigenlayer.xyz/" target="_blank" rel="noreferrer">EigenCompute</a>
+          TEE. Binary attested, sealed environment, USDC settles on Base mainnet.
+        </p>
       </section>
 
-      <section class="timeline">
-        <h2>Timeline</h2>
-        <ol id="events"></ol>
+      <section class="stats">
+        <div class="stat">
+          <strong>140+</strong>
+          <span>India brands</span>
+        </div>
+        <div class="stat">
+          <strong>4</strong>
+          <span>carriers · Jio, Airtel, Vi, BSNL</span>
+        </div>
+        <div class="stat">
+          <strong>0.78</strong>
+          <span>USDC · 6GB Jio data, live</span>
+        </div>
+        <div class="stat">
+          <strong>~45s</strong>
+          <span>request → delivery</span>
+        </div>
+      </section>
+
+      <section id="examples" class="examples">
+        <h2>What you can ask</h2>
+        <p class="muted section-lead">
+          Conversational. No commands, no SKUs. The agent discovers offers,
+          quotes in USDC, asks before spending, and surfaces the voucher / tx
+          on completion.
+        </p>
+
+        <details open>
+          <summary>“6 GB data pack to my Jio number”</summary>
+<pre>POST /api/run
+{"item":"Reliance Jio Data 6 GB","maxUsdc":1}
+
+→ discover_offers     Cryptorefills · IN · mobile_data
+→ fetch_quote         Reliance Jio Data 6 GB → 0.78 USDC
+→ hitl_requested      approve 0.78 USDC?
+→ pay_x402            signed · base mainnet
+→ payment_settled     order e3a9614b… processing
+→ asset_received      voucher delivered (code 6414…)
+→ completed in 45s</pre>
+        </details>
+
+        <details>
+          <summary>“Top up ₹100 on my Airtel number”</summary>
+<pre>POST /api/run
+{"item":"Airtel Credits ₹100","maxUsdc":1.5}
+
+→ fetch_quote         Airtel Credits ₹100 → 1.20 USDC
+→ pay_x402            signed
+→ asset_received      recharge applied · SMS confirmation</pre>
+        </details>
+
+        <details>
+          <summary>“Swiggy gift card for ₹250”</summary>
+<pre>POST /api/run
+{"item":"Swiggy ₹250 gift card","maxUsdc":3}
+
+→ fetch_quote         Swiggy ₹250 → 2.90 USDC
+→ asset_received      voucher emailed · redeem in Swiggy app</pre>
+        </details>
+
+        <details>
+          <summary>“BookMyShow voucher for ₹250”</summary>
+<pre>POST /api/run
+{"item":"BookMyShow ₹250","maxUsdc":3}
+
+→ fetch_quote         BookMyShow ₹250 → ~2.90 USDC
+→ asset_received      voucher emailed</pre>
+        </details>
+
+        <details>
+          <summary>“Google Play credit, smallest”</summary>
+<pre>POST /api/run
+{"item":"Google Play India ₹100","maxUsdc":1.5}
+
+→ asset_received      redemption code emailed</pre>
+        </details>
+      </section>
+
+      <section id="setup" class="setup">
+        <h2>Setup</h2>
+        <div class="setup-grid">
+          <article class="card">
+            <span class="step">1</span>
+            <h3>Humans → Telegram</h3>
+<pre id="telegram">@your_bot
+(coming soon)</pre>
+            <p>Conversational. Just chat: “top up ₹100 to +91…” The bot handles discovery, quoting, approvals, delivery.</p>
+          </article>
+
+          <article class="card">
+            <span class="step">2</span>
+            <h3>Agents → x402</h3>
+<pre>POST https://yours.dev/api/run
+content-type: application/json
+
+{"item":"...","maxUsdc":1}</pre>
+            <p>Any agent can call us. We charge <code>cost + small margin</code> in USDC. <code>/.well-known/x402</code> announces the schema.</p>
+          </article>
+
+          <article class="card">
+            <span class="step">3</span>
+            <h3>Fund the wallet</h3>
+<pre>Send USDC on Base
+to your agent's wallet</pre>
+            <p>The agent spends from its own wallet, capped per-payment and per-session. HITL gates anything above the threshold.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="endpoints" class="endpoints">
+        <h2>Endpoints</h2>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>POST /api/run</code>
+            <span class="price">cost + 5% margin</span>
+          </div>
+          <p>Execute a purchase. Body: <code>{ sessionId, item, maxUsdc }</code>. Returns a signed receipt with tx hash, sha256 of the delivered asset, and TEE attestation.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /api/events?sessionId=…</code>
+            <span class="price free">free</span>
+          </div>
+          <p>Server-Sent Events stream. Every step of the agent loop — discovery, quote, payment, HITL, settle, delivery — emitted as a typed event with history replay on connect.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>POST /api/confirm</code>
+            <span class="price free">free</span>
+          </div>
+          <p>Approve or reject a HITL-gated purchase mid-flight. Body: <code>{ sessionId, approved }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /api/receipts</code>
+            <span class="price free">free</span>
+          </div>
+          <p>List all completed purchases for this agent instance, with attestation hashes and asset checksums.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /verify</code>
+            <span class="price free">free</span>
+          </div>
+          <p>EigenCompute TEE attestation — gitSha, attestation hash, source label. Lets a caller verify the running binary matches the committed code.</p>
+        </div>
+      </section>
+
+      <section class="trust">
+        <h2>Why this is safe</h2>
+        <ul>
+          <li><strong>PII sealed in TEE env.</strong> Phone, email, address are read from sealed config inside the enclave. The model never sees them.</li>
+          <li><strong>Hard caps.</strong> Per-payment cap, per-session cap, HITL gate above threshold. Spend tracked and refused at signing time.</li>
+          <li><strong>Attested binary.</strong> EigenCompute publishes the attestation hash. Verify the running code matches the commit you trust.</li>
+          <li><strong>x402 v2 on Base mainnet.</strong> USDC settles on-chain. Receipts include the tx hash + sha256 of the delivered asset.</li>
+        </ul>
       </section>
     </main>
 
-    <script src="/app.js"></script>
+    <footer class="site">
+      <span class="muted">x402 · EigenCompute · Base mainnet</span>
+      <a href="https://github.com/zeeshan8281/agentic-comm-compute" target="_blank" rel="noreferrer">github</a>
+    </footer>
+
+    <script>
+      // Light-touch attestation badge — pulls /verify and replaces nav link text.
+      fetch("/verify")
+        .then((r) => r.json())
+        .then((v) => {
+          const el = document.getElementById("attest");
+          if (!el) return;
+          const tee = v?.attestation?.source === "tee";
+          el.textContent = tee
+            ? `● attested · ${v.attestation.gitSha.slice(0, 7)}`
+            : `○ local dev · ${v.attestation.gitSha.slice(0, 7)}`;
+          el.classList.add(tee ? "tee" : "local");
+        })
+        .catch(() => {});
+    </script>
   </body>
 </html>
