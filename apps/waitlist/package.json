@@ -1,0 +1,9 @@
+{
+  "name": "agentic-commerce-waitlist",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone Vercel waitlist page with Supabase backing. Separate deployment from the marketing frontend.",
+  "engines": {
+    "node": ">=20"
+  }
+}

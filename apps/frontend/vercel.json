@@ -1,0 +1,31 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": null,
+  "outputDirectory": "public",
+  "framework": null,
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/api/:path*"
+    },
+    {
+      "source": "/verify",
+      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/verify"
+    },
+    {
+      "source": "/health",
+      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/health"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ]
+}

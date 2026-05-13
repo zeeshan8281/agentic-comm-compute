@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agentic-commerce — buy anything, paid in USDC, in one chat</title>
+    <meta
+      name="description"
+      content="Agentic checkout across India, US, UK, Egypt, South Africa, and Nigeria. Mobile recharges, data, eSIMs, gift cards (Amazon, Walmart, Tesco, Swiggy, Jumia, Vodacom, MTN, Vodafone Egypt) — settled in USDC over x402. Runs inside an EigenCompute TEE."
+    />
+    <link rel="stylesheet" href="/landing.css" />
+  </head>
+  <body>
+    <header class="site">
+      <div class="brand">
+        <strong>agentic-commerce</strong>
+        <span class="muted">/ x402 purchase agent</span>
+      </div>
+      <nav>
+        <a href="#examples">examples</a>
+        <a href="#setup">setup</a>
+        <a href="#endpoints">endpoints</a>
+        <a href="/demo.html">demo</a>
+        <a href="/verify" class="attest" id="attest">attestation</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Buy anything across 6 countries,<br />paid in USDC, from one chat.</h1>
+        <p class="lead">
+          Amazon, Walmart, DoorDash, Steam, Tesco, John Lewis, Swiggy, Jumia, Vodacom, MTN, Vodafone Egypt —
+          1,600+ brands across <strong>🇮🇳 IN · 🇺🇸 US · 🇬🇧 UK · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</strong>,
+          settled in <strong>USDC over x402</strong> on Base mainnet. No KYC. Your phone and
+          email never leave the sealed env.
+        </p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://t.me/ac_eigen_bot" target="_blank" rel="noreferrer">Open @ac_eigen_bot →</a>
+          <a class="cta ghost" href="/demo.html">Try the web demo</a>
+        </div>
+        <p class="footnote">
+          Runs inside an
+          <a href="https://eigenlayer.xyz/" target="_blank" rel="noreferrer">EigenCompute</a>
+          TEE. Binary attested, sealed environment, USDC settles on Base mainnet.
+        </p>
+      </section>
+
+      <section class="stats">
+        <div class="stat">
+          <strong>1,600+</strong>
+          <span>brands across 6 countries</span>
+        </div>
+        <div class="stat">
+          <strong>854 · 421 · 142 · 90 · 49 · 39</strong>
+          <span>🇺🇸 US · 🇬🇧 UK · 🇮🇳 IN · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</span>
+        </div>
+        <div class="stat">
+          <strong>0.78</strong>
+          <span>USDC · 6GB Jio data, live</span>
+        </div>
+        <div class="stat">
+          <strong>~45s</strong>
+          <span>request → delivery</span>
+        </div>
+      </section>
+
+      <section id="examples" class="examples">
+        <h2>What you can ask</h2>
+        <p class="muted section-lead">
+          Conversational. No commands, no SKUs. The agent discovers offers,
+          quotes in USDC, asks before spending, and surfaces the voucher / tx
+          on completion.
+        </p>
+
+        <details open>
+          <summary>“6 GB data pack to my Jio number”</summary>
+<pre>POST /api/run
+{"item":"Reliance Jio Data 6 GB","maxUsdc":1}
+
+→ discover_offers     Cryptorefills · IN · mobile_data
+→ fetch_quote         Reliance Jio Data 6 GB → 0.78 USDC
+→ hitl_requested      approve 0.78 USDC?
+→ pay_x402            signed · base mainnet
+→ payment_settled     order e3a9614b… processing
+→ asset_received      voucher delivered (code 6414…)
+→ completed in 45s</pre>
+        </details>
+
+        <details>
+          <summary>“Top up ₹100 on my Airtel number”</summary>
+<pre>POST /api/run
+{"item":"Airtel Credits ₹100","maxUsdc":1.5}
+
+→ fetch_quote         Airtel Credits ₹100 → 1.20 USDC
+→ pay_x402            signed
+→ asset_received      recharge applied · SMS confirmation</pre>
+        </details>
+
+        <details>
+          <summary>“Swiggy gift card for ₹250”</summary>
+<pre>POST /api/run
+{"item":"Swiggy ₹250 gift card","maxUsdc":3}
+
+→ fetch_quote         Swiggy ₹250 → 2.90 USDC
+→ asset_received      voucher emailed · redeem in Swiggy app</pre>
+        </details>
+
+        <details>
+          <summary>“BookMyShow voucher for ₹250”</summary>
+<pre>POST /api/run
+{"item":"BookMyShow ₹250","maxUsdc":3}
+
+→ fetch_quote         BookMyShow ₹250 → ~2.90 USDC
+→ asset_received      voucher emailed</pre>
+        </details>
+
+        <details>
+          <summary>“Google Play credit, smallest”</summary>
+<pre>POST /api/run
+{"item":"Google Play India ₹100","maxUsdc":1.5}
+
+→ asset_received      redemption code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇺🇸 “$25 Amazon US gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.com $25 gift card","maxUsdc":26}
+
+→ cryptorefills_browse   US · 854 brands available
+→ cryptorefills_lookup   Amazon.com $25 → 25.69 USDC
+→ pay_x402               signed · base mainnet
+→ asset_received         claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇺🇸 “$10 DoorDash credit”</summary>
+<pre>POST /api/run
+{"item":"DoorDash $10","maxUsdc":11}
+
+→ fetch_quote         DoorDash $10 → 10.27 USDC
+→ asset_received      redemption code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇬🇧 “£20 Tesco voucher”</summary>
+<pre>POST /api/run
+{"item":"Tesco £20","maxUsdc":27}
+
+→ cryptorefills_browse   GB · 421 brands available
+→ cryptorefills_lookup   Tesco £20 → 25.84 USDC
+→ asset_received         voucher emailed · use online or in-store</pre>
+        </details>
+
+        <details>
+          <summary>🇬🇧 “£25 Amazon UK gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.co.uk £25","maxUsdc":34}
+
+→ fetch_quote         Amazon.co.uk £25 → 32.30 USDC
+→ asset_received      claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🌐 “eSIM, 5GB, 7 days”</summary>
+<pre>POST /api/run
+{"item":"eSIM 5GB 7d","maxUsdc":15}
+
+→ cryptorefills_browse   eSIM global · works US / UK / IN
+→ asset_received         QR code emailed · install via iOS / Android</pre>
+        </details>
+
+        <details>
+          <summary>🇳🇬 “MTN Nigeria ₦1000 airtime”</summary>
+<pre>POST /api/run
+{"item":"MTN Nigeria ₦1000 airtime","maxUsdc":1}
+
+→ cryptorefills_browse   NG · 39 brands · mobile_credits
+→ cryptorefills_lookup   MTN ₦1000 → 0.85 USDC
+→ pay_x402               signed
+→ asset_received         recharge applied · SMS confirmation</pre>
+        </details>
+
+        <details>
+          <summary>🇿🇦 “Vodacom 1GB data”</summary>
+<pre>POST /api/run
+{"item":"Vodacom 1GB","maxUsdc":2}
+
+→ cryptorefills_browse   ZA · 49 brands · mobile_data
+→ cryptorefills_lookup   Vodacom 1GB → 1.10 USDC
+→ asset_received         data bundle activated</pre>
+        </details>
+
+        <details>
+          <summary>🇪🇬 “Amazon.eg E£100 gift card”</summary>
+<pre>POST /api/run
+{"item":"Amazon.eg E£100","maxUsdc":3}
+
+→ cryptorefills_browse   EG · 90 brands available
+→ cryptorefills_lookup   Amazon.eg E£100 → 2.20 USDC
+→ asset_received         claim code emailed</pre>
+        </details>
+
+        <details>
+          <summary>🇳🇬 “Jumia voucher, anything”</summary>
+<pre>POST /api/run
+{"item":"Jumia Nigeria ₦5000","maxUsdc":4}
+
+→ cryptorefills_lookup   Jumia ₦5000 → 3.40 USDC
+→ asset_received         redemption code emailed</pre>
+        </details>
+      </section>
+
+      <section id="setup" class="setup">
+        <h2>Setup</h2>
+        <div class="setup-grid">
+          <article class="card">
+            <span class="step">1</span>
+            <h3>Humans → Telegram</h3>
+<pre id="telegram"><a href="https://t.me/ac_eigen_bot" target="_blank" rel="noreferrer">@ac_eigen_bot</a></pre>
+            <p>Conversational. Just chat: “top up ₹100 to my Jio number.” The bot handles discovery, quoting, HITL approval, and voucher delivery.</p>
+          </article>
+
+          <article class="card">
+            <span class="step">2</span>
+            <h3>Agents → x402</h3>
+<pre>POST https://yours.dev/api/run
+content-type: application/json
+
+{"item":"...","maxUsdc":1}</pre>
+            <p>Any agent can call us. We charge <code>cost + small margin</code> in USDC. <code>/.well-known/x402</code> announces the schema.</p>
+          </article>
+
+          <article class="card">
+            <span class="step">3</span>
+            <h3>Fund the wallet</h3>
+<pre>Send USDC on Base
+to your agent's wallet</pre>
+            <p>The agent spends from its own wallet, capped per-payment and per-session. HITL gates anything above the threshold.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="endpoints" class="endpoints">
+        <h2>Endpoints</h2>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>POST /api/run</code>
+            <span class="price">cost + 5% margin</span>
+          </div>
+          <p>Execute a purchase. Body: <code>{ sessionId, item, maxUsdc }</code>. Returns a signed receipt with tx hash, sha256 of the delivered asset, and TEE attestation.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /api/events?sessionId=…</code>
+            <span class="price free">free</span>
+          </div>
+          <p>Server-Sent Events stream. Every step of the agent loop — discovery, quote, payment, HITL, settle, delivery — emitted as a typed event with history replay on connect.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>POST /api/confirm</code>
+            <span class="price free">free</span>
+          </div>
+          <p>Approve or reject a HITL-gated purchase mid-flight. Body: <code>{ sessionId, approved }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /api/receipts</code>
+            <span class="price free">free</span>
+          </div>
+          <p>List all completed purchases for this agent instance, with attestation hashes and asset checksums.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head">
+            <code>GET /verify</code>
+            <span class="price free">free</span>
+          </div>
+          <p>EigenCompute TEE attestation — gitSha, attestation hash, source label. Lets a caller verify the running binary matches the committed code.</p>
+        </div>
+      </section>
+
+      <section class="trust">
+        <h2>Why this is safe</h2>
+        <ul>
+          <li><strong>PII sealed in TEE env.</strong> Phone, email, address are read from sealed config inside the enclave. The model never sees them.</li>
+          <li><strong>Hard caps.</strong> Per-payment cap, per-session cap, HITL gate above threshold. Spend tracked and refused at signing time.</li>
+          <li><strong>Attested binary.</strong> EigenCompute publishes the attestation hash. Verify the running code matches the commit you trust.</li>
+          <li><strong>x402 v2 on Base mainnet.</strong> USDC settles on-chain. Receipts include the tx hash + sha256 of the delivered asset.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site">
+      <span class="muted">x402 · EigenCompute · Base mainnet</span>
+      <a href="https://github.com/zeeshan8281/agentic-comm-compute" target="_blank" rel="noreferrer">github</a>
+    </footer>
+
+    <script>
+      // Light-touch attestation badge — pulls /verify and replaces nav link text.
+      fetch("/verify")
+        .then((r) => r.json())
+        .then((v) => {
+          const el = document.getElementById("attest");
+          if (!el) return;
+          const tee = v?.attestation?.source === "tee";
+          el.textContent = tee
+            ? `● attested · ${v.attestation.gitSha.slice(0, 7)}`
+            : `○ local dev · ${v.attestation.gitSha.slice(0, 7)}`;
+          el.classList.add(tee ? "tee" : "local");
+        })
+        .catch(() => {});
+    </script>
+  </body>
+</html>

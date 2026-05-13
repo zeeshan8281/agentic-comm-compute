@@ -13,6 +13,27 @@ import { startTelegramBot } from "./telegram.js";
 
 const log = pino({ level: env.LOG_LEVEL });
 const app = express();
+
+// Behind Vercel rewrites / any CDN proxy, Express needs to trust the first
+// hop so req.ip and protocol detection match reality.
+app.set("trust proxy", 1);
+
+// Loose CORS: this is an x402-paid public API + a backend behind a Vercel
+// rewrite. The rewrite path is same-origin, but direct agent-to-agent
+// callers and the demo page hosted on other domains need it. Auth lives in
+// the x402 payment header, not in cookies, so credential mode stays off.
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE",
+  );
+  res.setHeader("Access-Control-Expose-Headers", "X-PAYMENT-RESPONSE");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+});
+
 app.use(express.json({ limit: "256kb" }));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,7 +110,10 @@ app.get("/api/receipts/:id", (req, res) => {
   res.json({ receipt: r });
 });
 
-app.listen(env.PORT, () => {
+// Bind to 0.0.0.0 explicitly so the EigenCompute TEE runtime can reach the
+// app from outside the container. Default Express bind is implementation-
+// dependent and has been known to bind to ::1 in some Node versions.
+app.listen(env.PORT, "0.0.0.0", () => {
   const att = readAttestation();
   log.info(
     {
