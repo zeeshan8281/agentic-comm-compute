@@ -272,6 +272,7 @@ const runPurchase = async (
         // email — Cryptorefills accepts either depending on product type.
         cryptorefillsBeneficiary: profile.phone ?? profile.email,
         cryptorefillsCountry: profile.country,
+        country: profile.country,
       },
     });
     if (receipt.voucher?.code) {

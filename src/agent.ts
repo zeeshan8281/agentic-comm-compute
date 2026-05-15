@@ -9,6 +9,7 @@ import {
   findMerchantByItem,
   findCatalogItem,
   findResource,
+  ryeBuyer,
 } from "./config.js";
 import { fetchQuote, payAndRetrieve } from "./x402-client.js";
 import {
@@ -18,6 +19,24 @@ import {
   ordersUrl as crOrdersUrl,
   type CrOrderResponse,
 } from "./cryptorefills.js";
+import {
+  createIntentUrl as ryeCreateIntentUrl,
+  confirmIntentUrl as ryeConfirmIntentUrl,
+  buildCreateIntentBody as ryeBuildCreateIntentBody,
+  buildConfirmBody as ryeBuildConfirmBody,
+  pollIntent as ryePollIntent,
+  ryeTotalUsdc,
+  type RyeIntent,
+} from "./rye.js";
+import {
+  authUrl as lasoAuthUrl,
+  orderGiftCardUrl as lasoOrderGiftCardUrl,
+  searchGiftCards as lasoSearchGiftCards,
+  lasoIdToken,
+  type LasoAuthResponse,
+  type LasoGiftOrder,
+} from "./laso.js";
+import { getWallet } from "./wallet.js";
 import { assertWithinCaps, recordSpend, requiresHitl } from "./caps.js";
 import { requestApproval } from "./hitl.js";
 import { readAttestation } from "./attestation.js";
@@ -29,33 +48,51 @@ export type RunInput = {
   sessionId?: string;
   item: string;
   maxUsdc: number;
-  // Optional per-call overrides for Cryptorefills delivery. The Telegram bot
-  // passes the chat owner's phone + email here so a single agent instance can
-  // serve many users without leaking PII through the model. When unset, the
-  // tool falls back to the global env values (single-tenant local dev).
+  // Optional per-call overrides. The Telegram bot passes the chat owner's
+  // phone + email here so a single agent instance can serve many users
+  // without leaking PII through the model. When unset, the tool falls back
+  // to the global env values (single-tenant local dev). `country` drives
+  // commerce-merchant routing: 'us' opens Rye + Laso paths; everywhere else
+  // routes to Cryptorefills.
   userConfig?: {
     cryptorefillsEmail?: string;
     cryptorefillsBeneficiary?: string;
     cryptorefillsCountry?: string;
+    country?: string;
   };
 };
 
 const systemPrompt = `You are a purchase agent running inside an EigenCompute TEE.
 You receive a single purchase request and a max USDC the user is willing to spend.
 
-There are two purchase paths. Pick exactly one based on the request:
+Routing — pick exactly one path based on the user's country and the request:
 
-PATH A — Static catalog (the request matches a known item id like 'btc-fees-now', 'stablemerch-shirt', 'x-user-lookup', 'reddit-subreddit'):
+PATH A — Static catalog (any country; the request matches a known item id like 'btc-fees-now', 'stablemerch-shirt', 'x-user-lookup', 'reddit-subreddit'):
   1. discover_offers(itemId) — locate the merchant + resource URL.
   2. fetch_quote(...) — read the live 402 challenge.
   3. If quote ≤ max, call pay_x402(...). Above the HITL threshold it blocks for human approval.
   4. verify_delivery(itemId). Stop.
 
-PATH B — Cryptorefills (the request describes a gift card, mobile top-up, eSIM, or country-scoped voucher — e.g. '$25 Amazon gift card', '£20 Tesco voucher', '₹100 Swiggy', 'Airtel ₹50 recharge', 'DoorDash $10', 'eSIM 5GB'):
-  1. cryptorefills_browse({country}) — list available brands in the user's country to confirm the brand exists. Skip if the request already names a specific brand + denomination AND you've already seen it this turn. Pass an explicit country only if the request unambiguously names a brand from a country different from the user's default (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in). Otherwise omit and let the tool use the user's configured country.
-  2. cryptorefills_lookup_brand({country, brand_name}) — get the product_id for the requested denomination and its USDC price.
-  3. If price_usdc ≤ max, call cryptorefills_buy({product_id, brandName, denomination, expectedUsdc, productValue?}). Above the HITL threshold it blocks for human approval. The buy tool pays, polls the order, and returns the voucher code.
+PATH B — Cryptorefills (DEFAULT for all non-US countries; also for US gift cards / mobile recharges / eSIMs — '$25 Amazon gift card', '£20 Tesco voucher', '₹100 Swiggy', 'Airtel ₹50', 'DoorDash $10', 'eSIM 5GB'):
+  1. cryptorefills_browse({country}) — list available brands. Skip if the request already names a specific brand + denomination AND you've already seen it this turn. Pass an explicit country only if the request unambiguously names a brand from a country different from the user's default (e.g. 'Tesco' → gb, 'DoorDash' → us, 'Jio' → in). Otherwise omit.
+  2. cryptorefills_lookup_brand({country, brand_name}) — get the product_id + USDC price.
+  3. If price_usdc ≤ max, call cryptorefills_buy({product_id, brandName, denomination, expectedUsdc, productValue?}).
   4. Stop.
+
+PATH C — Rye (US ONLY; physical goods from any merchant URL — Shopify, Walmart, Best Buy, etc. Amazon listings are gated by Rye and will fail). Only choose this when the user is in US AND the request includes a product URL OR names a physical product to be shipped:
+  1. rye_buy({productUrl, quantity}) — creates the checkout intent, polls for the offer, then confirms the order. The tool injects the buyer's shipping block from sealed env config. Above the HITL threshold it blocks for human approval. Returns the order id and tracking info.
+  2. Stop.
+
+PATH D — Laso (US ONLY; prepaid Visa cards, gift cards, push-to-debit). Only choose this when the user is in US AND the request is for a fiat instrument (prepaid card to spend anywhere, or a brand gift card you couldn't find on Cryptorefills):
+  1. laso_search_giftcards({q}) — find the laso_server_id for the requested brand.
+  2. laso_buy_giftcard({lasoServerId, amount, brandName}) — pays via x402 and returns the redemption code / URL. Above the HITL threshold it blocks for human approval.
+  3. Stop.
+
+US routing tie-breakers (when user.country='us'):
+- "buy me <physical product>" or a Shopify/Walmart/Best Buy URL → Rye (PATH C).
+- "$X prepaid Visa" or "load a Visa with $X" → Laso (PATH D).
+- "$X <brand> gift card" → prefer Cryptorefills (PATH B), fall back to Laso (PATH D) if Cryptorefills doesn't carry it.
+- Mobile top-ups → Cryptorefills (PATH B).
 
 Country hints (when the user mentions a brand without a country):
 - India (in): Jio, Airtel India, Vi, BSNL, Swiggy, Zomato, BookMyShow, Phonepe, Nykaa, MakeMyTrip, Amazon Pay India.
@@ -67,10 +104,11 @@ Country hints (when the user mentions a brand without a country):
 - Global (any country): eSIM.
 
 Hard rules:
-- Never invent product_ids or item_ids — only use ones returned by a discovery tool.
+- Never invent product_ids, item_ids, or laso_server_ids — only use ones returned by a discovery tool.
 - Never call a URL outside the allowlist (the discovery tools enforce this).
 - Do not retry the same purchase twice without changing inputs.
-- The buy tool reads the user's email and beneficiary account from a sealed env config — never put those in tool arguments and never ask the user for them.`;
+- Buy tools read the user's email, phone, and shipping address from sealed env config — never put PII in tool arguments and never ask the user for it.
+- Rye and Laso are US-only. If the user's country is not 'us', do NOT call rye_* or laso_* tools.`;
 
 export const runAgent = async (input: RunInput): Promise<Receipt> => {
   const sessionId = input.sessionId ?? randomUUID();
@@ -92,6 +130,9 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
   // that path with the order JSON serialized as the asset bytes.
   let lastVoucher: VoucherDelivery | undefined;
   let lastCryptoOrder: { merchantId: "cryptorefills"; resourceUrl: string; amountUsdc: string } | undefined;
+  // Cached Laso id_token for the duration of this agent run. /auth costs
+  // $0.001 USDC each time; cache so a single session pays once.
+  let lasoToken: string | undefined;
 
   const tools = {
     discover_offers: tool({
@@ -492,6 +533,292 @@ export const runAgent = async (input: RunInput): Promise<Receipt> => {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           session.emitEvent({ kind: "error", message: `cryptorefills_buy failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
+
+    rye_buy: tool({
+      description:
+        "Buy a physical product via Rye Universal Checkout (US shipping only). Pass the merchant product URL (Shopify, Walmart, etc — Amazon listings are gated). Tool creates a checkout intent, polls until the offer (price + shipping + tax) is ready, confirms the order, and polls until completed. Above HITL it blocks for approval. Buyer shipping info is injected from sealed env config — never pass PII as arguments.",
+      inputSchema: z.object({
+        productUrl: z.string().url().describe("Direct product URL on the merchant's site."),
+        quantity: z.number().int().min(1).max(10).default(1),
+      }),
+      execute: async ({ productUrl, quantity }) => {
+        const country = (input.userConfig?.country ?? "").toLowerCase();
+        if (country && country !== "us") {
+          return { error: `Rye ships US-only; user country is '${country}'.` };
+        }
+        let buyer;
+        try {
+          buyer = ryeBuyer();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: msg });
+          return { error: msg };
+        }
+        const network =
+          env.X402_NETWORK === "base-sepolia" ? "eip155:84532" : "eip155:8453";
+        const wallet = getWallet();
+
+        session.emitEvent({
+          kind: "discover_offers",
+          message: `Creating Rye checkout intent for ${productUrl}`,
+        });
+        try {
+          const { response: intentRes, txHash: intentTx } = await payAndRetrieve({
+            url: ryeCreateIntentUrl,
+            method: "POST",
+            body: ryeBuildCreateIntentBody({ productUrl, quantity, buyer, network }),
+          });
+          const intent = (await intentRes.json()) as RyeIntent;
+          session.emitEvent({
+            kind: "payment_settled",
+            message: `Rye intent fee paid (${intent.id}). tx ${intentTx}`,
+            data: { txHash: intentTx, intentId: intent.id },
+          });
+
+          const ready = await ryePollIntent(intent.id, wallet.address, {
+            until: ["awaiting_confirmation", "failed"],
+            onTick: (r) =>
+              session.emitEvent({
+                kind: "retrieve_asset",
+                message: `Rye intent ${r.id} state=${r.state}`,
+              }),
+          });
+          if (ready.state !== "awaiting_confirmation") {
+            return { error: `Rye intent ${ready.id} ended in state=${ready.state}` };
+          }
+
+          const offerTotal = ryeTotalUsdc(ready);
+          const offerCurrency = ready.offer?.cost?.total?.currencyCode ?? "USD";
+          if (typeof offerTotal !== "number" || !Number.isFinite(offerTotal) || offerTotal <= 0) {
+            return {
+              error: `Rye offer has no usable total (cost=${JSON.stringify(ready.offer?.cost ?? null)})`,
+            };
+          }
+          try {
+            assertWithinCaps(sessionId, offerTotal, input.maxUsdc);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            session.emitEvent({ kind: "error", message: msg });
+            return { error: msg };
+          }
+          if (requiresHitl(offerTotal)) {
+            session.emitEvent({
+              kind: "hitl_requested",
+              message: `Awaiting human approval for Rye order ${offerTotal} ${offerCurrency}`,
+              data: { amountUsdc: String(offerTotal), merchantId: "rye", itemId: ready.id },
+            });
+            const approved = await requestApproval(sessionId, {
+              amountUsdc: String(offerTotal),
+              merchantId: `rye (${productUrl})`,
+              itemId: ready.id,
+            });
+            session.emitEvent({
+              kind: "hitl_resolved",
+              message: approved ? "Approved" : "Rejected by user",
+            });
+            if (!approved) return { error: "Rejected by user" };
+          }
+
+          session.emitEvent({
+            kind: "pay_x402",
+            message: `Confirming Rye order ${ready.id} (${offerTotal} ${offerCurrency})`,
+          });
+          const { response: confirmRes, txHash: confirmTx } = await payAndRetrieve({
+            url: ryeConfirmIntentUrl,
+            method: "POST",
+            body: ryeBuildConfirmBody({ id: ready.id, network }),
+          });
+          await confirmRes.json().catch(() => undefined);
+          recordSpend(sessionId, offerTotal);
+
+          const final = await ryePollIntent(ready.id, wallet.address, {
+            until: ["completed", "failed"],
+            onTick: (r) =>
+              session.emitEvent({
+                kind: "retrieve_asset",
+                message: `Rye order ${r.id} state=${r.state}`,
+              }),
+          });
+
+          const bytes = Buffer.from(JSON.stringify(final), "utf8");
+          lastPayment = { txHash: confirmTx, bytes, contentType: "application/json" };
+          lastCryptoOrder = {
+            merchantId: "rye" as unknown as "cryptorefills",
+            resourceUrl: ryeConfirmIntentUrl,
+            amountUsdc: String(offerTotal),
+          };
+          lastVoucher = {
+            brand: "Rye",
+            denomination: `${offerTotal} ${offerCurrency}`,
+            orderId: final.orderId ?? final.id,
+            instructions: `Shipped via Rye. Intent ${final.id}, state=${final.state}.`,
+          };
+          session.emitEvent({
+            kind: "asset_received",
+            message:
+              final.state === "completed"
+                ? `Rye order placed (orderId ${final.orderId ?? final.id})`
+                : `Rye order ended in state=${final.state}`,
+            data: { state: final.state, orderId: final.orderId ?? final.id },
+          });
+
+          if (final.state !== "completed") {
+            return {
+              error: `Rye order ended in state=${final.state}`,
+              orderId: final.orderId ?? final.id,
+              state: final.state,
+            };
+          }
+          return {
+            txHash: confirmTx,
+            intentId: final.id,
+            orderId: final.orderId ?? final.id,
+            state: final.state,
+            total: offerTotal,
+            currency: offerCurrency,
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `rye_buy failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
+
+    laso_search_giftcards: tool({
+      description:
+        "Search Laso Finance's gift card catalog (US). Returns laso_server_id + denomination ranges. Authenticates via x402 ($0.001 USDC) and caches the token for the rest of the session. Pass a brand keyword in `q`.",
+      inputSchema: z.object({
+        q: z.string().optional().describe("Brand keyword, e.g. 'Amazon', 'Starbucks'."),
+        country: z.string().length(2).optional().describe("ISO-3166 alpha-2; defaults to 'US'."),
+      }),
+      execute: async ({ q, country }) => {
+        const userCountry = (input.userConfig?.country ?? "").toLowerCase();
+        if (userCountry && userCountry !== "us") {
+          return { error: `Laso is US-only; user country is '${userCountry}'.` };
+        }
+        try {
+          if (!lasoToken) {
+            session.emitEvent({
+              kind: "discover_offers",
+              message: "Authenticating with Laso ($0.001 USDC)",
+            });
+            const { response } = await payAndRetrieve({ url: lasoAuthUrl, method: "GET" });
+            const auth = (await response.json()) as LasoAuthResponse;
+            const token = lasoIdToken(auth);
+            if (!token) {
+              return { error: `Laso /auth returned no id_token (shape=${JSON.stringify(Object.keys(auth))})` };
+            }
+            lasoToken = token;
+          }
+          const cards = await lasoSearchGiftCards(lasoToken, { q, country: country ?? "US" });
+          return {
+            count: cards.length,
+            cards: cards.slice(0, 25).map((c) => ({
+              laso_server_id: c.laso_server_id,
+              name: c.name,
+              currency: c.currency,
+              min: c.min,
+              max: c.max,
+              increment: c.increment,
+              denominations: c.denominations,
+            })),
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `laso_search_giftcards failed: ${msg}` });
+          return { error: msg };
+        }
+      },
+    }),
+
+    laso_buy_giftcard: tool({
+      description:
+        "Buy a US gift card via Laso Finance. Pass the laso_server_id from laso_search_giftcards and the face-value amount in USD. Above HITL it blocks for human approval. Returns redemption_code / redemption_url.",
+      inputSchema: z.object({
+        lasoServerId: z.string().describe("From laso_search_giftcards."),
+        amount: z.number().min(5).max(9000),
+        brandName: z.string().describe("For the receipt — must match the card returned by search."),
+        country: z.string().length(2).optional(),
+      }),
+      execute: async ({ lasoServerId, amount, brandName, country }) => {
+        const userCountry = (input.userConfig?.country ?? "").toLowerCase();
+        if (userCountry && userCountry !== "us") {
+          return { error: `Laso is US-only; user country is '${userCountry}'.` };
+        }
+        try {
+          assertWithinCaps(sessionId, amount, input.maxUsdc);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: msg });
+          return { error: msg };
+        }
+        if (requiresHitl(amount)) {
+          session.emitEvent({
+            kind: "hitl_requested",
+            message: `Awaiting human approval for ${amount} USDC (Laso ${brandName})`,
+            data: { amountUsdc: String(amount), merchantId: "laso", itemId: lasoServerId },
+          });
+          const approved = await requestApproval(sessionId, {
+            amountUsdc: String(amount),
+            merchantId: `laso (${brandName})`,
+            itemId: lasoServerId,
+          });
+          session.emitEvent({
+            kind: "hitl_resolved",
+            message: approved ? "Approved" : "Rejected by user",
+          });
+          if (!approved) return { error: "Rejected by user" };
+        }
+        session.emitEvent({
+          kind: "pay_x402",
+          message: `Paying ${amount} USDC for ${brandName} via Laso`,
+        });
+        try {
+          const url = lasoOrderGiftCardUrl({ amount, lasoServerId, country: country ?? "US" });
+          const { response, txHash } = await payAndRetrieve({ url, method: "GET" });
+          const order = (await response.json()) as LasoGiftOrder;
+          recordSpend(sessionId, amount);
+          const bytes = Buffer.from(JSON.stringify(order), "utf8");
+          lastPayment = { txHash, bytes, contentType: "application/json" };
+          lastCryptoOrder = {
+            merchantId: "laso" as unknown as "cryptorefills",
+            resourceUrl: url,
+            amountUsdc: String(amount),
+          };
+          lastVoucher = {
+            brand: brandName,
+            denomination: `${amount} ${order.currency ?? "USD"}`,
+            orderId: order.card_id ?? lasoServerId,
+            code: order.redemption_code,
+            pin: order.redemption_pin,
+            expiry: order.expires_at,
+            instructions:
+              order.instructions ??
+              (order.redemption_url ? `Redeem at ${order.redemption_url}` : undefined),
+          };
+          session.emitEvent({
+            kind: "asset_received",
+            message: `Laso gift card delivered${order.redemption_code ? ` (code ${order.redemption_code.slice(0, 4)}…)` : ""}`,
+            data: { cardId: order.card_id },
+          });
+          return {
+            txHash,
+            cardId: order.card_id,
+            brand: brandName,
+            amount,
+            currency: order.currency ?? "USD",
+            redemption_code: order.redemption_code,
+            redemption_url: order.redemption_url,
+            expires_at: order.expires_at,
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          session.emitEvent({ kind: "error", message: `laso_buy_giftcard failed: ${msg}` });
           return { error: msg };
         }
       },

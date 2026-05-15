@@ -58,6 +58,20 @@ export const env = {
   CRYPTOREFILLS_EMAIL: optional("CRYPTOREFILLS_EMAIL"),
   CRYPTOREFILLS_BENEFICIARY: optional("CRYPTOREFILLS_BENEFICIARY"),
 
+  // Rye Universal Checkout (US shipping only). The agent passes only a
+  // product URL + quantity to the tool; the rye_buy tool injects the buyer
+  // shipping block from env so the model never sees the user's address.
+  RYE_FIRST_NAME: optional("RYE_FIRST_NAME"),
+  RYE_LAST_NAME: optional("RYE_LAST_NAME"),
+  RYE_EMAIL: optional("RYE_EMAIL"),
+  RYE_PHONE: optional("RYE_PHONE"),
+  RYE_ADDRESS1: optional("RYE_ADDRESS1"),
+  RYE_ADDRESS2: optional("RYE_ADDRESS2"),
+  RYE_CITY: optional("RYE_CITY"),
+  RYE_STATE: optional("RYE_STATE"),
+  RYE_ZIP: optional("RYE_ZIP"),
+  RYE_COUNTRY: optional("RYE_COUNTRY", "US"),
+
   // Telegram conversational bot. Token from @BotFather. When empty, the bot
   // module is not loaded and only the HTTP API runs.
   TELEGRAM_BOT_TOKEN: optional("TELEGRAM_BOT_TOKEN"),
@@ -217,7 +231,53 @@ export const merchants: Merchant[] = [
     baseUrl: "https://x402.cryptorefills.com",
     resources: [],
   },
+  // Rye Universal Checkout — buy any product URL across 15k+ merchant sites
+  // (Shopify, Walmart; Amazon listings are gated by Rye). US shipping only.
+  // Tools rye_buy uses; no static catalog.
+  {
+    id: "rye",
+    name: "Rye Universal Checkout (physical goods, US shipping)",
+    baseUrl: "https://x402.rye.com",
+    resources: [],
+  },
+  // Laso Finance — US prepaid cards, gift cards, push-to-debit. v1 wires gift
+  // cards only (closest analogue to Cryptorefills for US fiat instruments).
+  {
+    id: "laso",
+    name: "Laso Finance (US fiat — prepaid + gift cards + push-to-debit)",
+    baseUrl: "https://laso.finance",
+    resources: [],
+  },
 ];
+
+// Build a Rye shipping payload from env. The agent never sees these fields.
+export const ryeBuyer = () => {
+  const required: Array<[string, string]> = [
+    ["RYE_FIRST_NAME", env.RYE_FIRST_NAME],
+    ["RYE_LAST_NAME", env.RYE_LAST_NAME],
+    ["RYE_EMAIL", env.RYE_EMAIL],
+    ["RYE_ADDRESS1", env.RYE_ADDRESS1],
+    ["RYE_CITY", env.RYE_CITY],
+    ["RYE_STATE", env.RYE_STATE],
+    ["RYE_ZIP", env.RYE_ZIP],
+  ];
+  const missing = required.filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) {
+    throw new Error(`Rye order missing fields: ${missing.join(", ")}`);
+  }
+  return {
+    firstName: env.RYE_FIRST_NAME,
+    lastName: env.RYE_LAST_NAME,
+    email: env.RYE_EMAIL,
+    phone: env.RYE_PHONE || undefined,
+    address1: env.RYE_ADDRESS1,
+    address2: env.RYE_ADDRESS2 || undefined,
+    city: env.RYE_CITY,
+    province: env.RYE_STATE,
+    postalCode: env.RYE_ZIP,
+    country: env.RYE_COUNTRY,
+  };
+};
 
 const allResources: MerchantResource[] = merchants.flatMap((m) =>
   m.resources.map((r) => ({ ...r, _merchantId: m.id })),

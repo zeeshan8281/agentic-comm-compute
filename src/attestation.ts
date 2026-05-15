@@ -1,17 +1,33 @@
 import { createHash } from "node:crypto";
+import { readFileSync, existsSync } from "node:fs";
 import { env } from "./config.js";
 import type { AttestationSnapshot } from "./types.js";
 
-// EigenCompute generates a TDX vTPM measurement at boot. The Eigen runtime is
-// expected to expose it as ECLOUD_ATTESTATION_HASH (matches the dual402-starter
-// pattern). When that env is absent we are running locally — surface that
-// honestly rather than fabricating a hash.
-//
-// Per-receipt: this is read fresh on every call. PRD §10 forbids caching.
-export const readAttestation = (): AttestationSnapshot => {
-  const hasTeeAttestation = Boolean(env.ECLOUD_ATTESTATION_HASH);
+// EigenCompute layers a `kms-signing-public-key.pem` into the image at deploy
+// time. Its presence is proof that the boot ran through the attested KMS
+// pipeline (Caddy + tls-keygen + compute-source-env.sh decrypt sealed secrets
+// only after the TDX quote is verified). We hash that pem and surface it as
+// the attestation hash — anyone can verify against the dashboard at
+// verify-sepolia.eigencloud.xyz/app/<ECLOUD_APP_ID>.
+const KMS_PEM_PATH = "/usr/local/bin/kms-signing-public-key.pem";
 
-  if (hasTeeAttestation) {
+// Per-receipt: read fresh on every call. PRD §10 forbids caching.
+export const readAttestation = (): AttestationSnapshot => {
+  if (existsSync(KMS_PEM_PATH)) {
+    const pem = readFileSync(KMS_PEM_PATH);
+    const pemHash = createHash("sha256").update(pem).digest("hex");
+    return {
+      gitSha: env.GIT_SHA,
+      buildTime: env.BUILD_TIME,
+      appId: env.ECLOUD_APP_ID || "unknown",
+      attestationHash: `sha256:${pemHash}`,
+      source: "tee",
+    };
+  }
+
+  // Explicit override path for non-KMS deployments that still want to assert
+  // the TEE source (e.g. injecting both vars manually).
+  if (env.ECLOUD_ATTESTATION_HASH) {
     return {
       gitSha: env.GIT_SHA,
       buildTime: env.BUILD_TIME,

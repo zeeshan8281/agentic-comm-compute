@@ -3,7 +3,7 @@
 // Without them the endpoint accepts the submission and logs it — useful for
 // preview deployments before the Supabase project is wired up.
 
-const SUPPORTED_COUNTRIES = new Set(["in", "us", "gb", "eg", "za", "ng", "other"]);
+const SUPPORTED_COUNTRIES = new Set(["in", "us", "gb", "ae", "eg", "za", "ng", "other"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const json = (res, status, body) => {

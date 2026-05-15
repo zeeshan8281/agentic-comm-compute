@@ -11,12 +11,18 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div class="verified-by">
+      <span>made verifiable with</span>
+      <a href="https://www.eigencloud.xyz/" target="_blank" rel="noreferrer" class="eigen-lockup" aria-label="EigenCloud">
+        <img src="/eigencloud-lockup.svg" alt="EigenCloud" height="18" />
+      </a>
+    </div>
     <main>
       <section class="hero">
         <p class="kicker">private beta · early-2026</p>
         <h1>agentic-commerce</h1>
         <p class="tagline">
-          Buy anything in <strong>🇮🇳 IN · 🇺🇸 US · 🇬🇧 UK · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</strong>,
+          Buy anything in <strong>🇮🇳 IN · 🇺🇸 US · 🇬🇧 UK · 🇦🇪 AE · 🇪🇬 EG · 🇿🇦 ZA · 🇳🇬 NG</strong>,
           paid in USDC from one chat. Runs inside an EigenCompute TEE — your PII
           never reaches the model.
         </p>
@@ -39,20 +45,12 @@
               <option value="in">🇮🇳 India</option>
               <option value="us">🇺🇸 United States</option>
               <option value="gb">🇬🇧 United Kingdom</option>
+              <option value="ae">🇦🇪 United Arab Emirates</option>
               <option value="eg">🇪🇬 Egypt</option>
               <option value="za">🇿🇦 South Africa</option>
               <option value="ng">🇳🇬 Nigeria</option>
               <option value="other">other / not listed</option>
             </select>
-          </label>
-          <label class="row">
-            <span>what would you buy first?</span>
-            <input
-              type="text"
-              name="intent"
-              maxlength="120"
-              placeholder="e.g. $25 Amazon, ₹100 Jio, MTN ₦1000, Tesco £20"
-            />
           </label>
           <button type="submit" id="submit">request access →</button>
         </form>
@@ -67,9 +65,7 @@
         </ul>
 
         <footer class="foot">
-          <a href="https://github.com/zeeshan8281/agentic-comm-compute" target="_blank" rel="noreferrer">github</a>
-          <span>·</span>
-          <a href="https://t.me/ac_eigen_bot" target="_blank" rel="noreferrer">telegram</a>
+          <span>private beta · invite-only · 🇮🇳 🇺🇸 🇬🇧 🇪🇬 🇿🇦 🇳🇬</span>
         </footer>
       </section>
     </main>

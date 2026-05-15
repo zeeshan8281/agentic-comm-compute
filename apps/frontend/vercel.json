@@ -7,15 +7,15 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/api/:path*"
+      "destination": "https://35-186-152-24.sslip.io/api/:path*"
     },
     {
       "source": "/verify",
-      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/verify"
+      "destination": "https://35-186-152-24.sslip.io/verify"
     },
     {
       "source": "/health",
-      "destination": "https://EIGEN_BACKEND_HOST_PLACEHOLDER/health"
+      "destination": "https://35-186-152-24.sslip.io/health"
     }
   ],
   "headers": [

@@ -1,14 +1,16 @@
 import { getAddress, toHex } from "viem";
 import { randomBytes } from "node:crypto";
 import { getWallet } from "./wallet.js";
-import { isAllowlistedUrl } from "./config.js";
+import { env, isAllowlistedUrl } from "./config.js";
 import type { Quote } from "./types.js";
 
-// Hard upper bound on a single payment, in USDC base units (6 decimals).
-// 1.5 USDC ≈ ₹125 — the testing-phase backstop. Sits just above the policy
-// cap (CAP_PER_PAYMENT_USDC=1.20) so even if env caps are bypassed, the
-// signer refuses anything materially above ₹100.
-const MAX_PAYMENT_BASE_UNITS = 1_500_000n;
+// Hard upper bound on a single signed payment, in USDC base units (6 decimals).
+// Sourced from CAP_PER_PAYMENT_USDC so the signer backstop tracks the policy
+// cap. Real-world commerce (Rye carts, Laso prepaid cards) routinely exceeds
+// the legacy 1.5 USDC dev backstop, so this defaults to 25 USDC.
+const MAX_PAYMENT_BASE_UNITS = BigInt(
+  Math.ceil((env.CAP_PER_PAYMENT_USDC || 25) * 1_000_000),
+);
 
 // Networks the agent will sign for. The CAIP-2 id is what the v2 wire format
 // uses on the wire; the chainId is what EIP-712 needs in the domain.
